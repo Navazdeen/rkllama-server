@@ -49,6 +49,31 @@ current_chat_title = None
 chat_db: Optional[ChatDatabase] = None
 title_updated_for_chat = {}
 
+# Configuration parameters for web search and thinking
+search_config = {
+    'n_iterations': 3,           # Default iterations
+    'max_results': 3,            # Default max results per search
+    'info_length_threshold': 500, # Default info threshold
+}
+
+# Thinking phase updates storage (for live updates)
+thinking_updates = {
+    'current': [],  # Current thinking updates
+    'lock': threading.Lock()
+}
+
+def update_thinking_display(message: str):
+    """Add a thinking update message for UI display."""
+    with thinking_updates['lock']:
+        thinking_updates['current'].append(message)
+
+def get_thinking_updates() -> List[str]:
+    """Get current thinking updates and clear them."""
+    with thinking_updates['lock']:
+        updates = thinking_updates['current'].copy()
+        thinking_updates['current'].clear()
+        return updates
+
 # Configuration
 MAX_HISTORY_MESSAGES = 20  # Keep last N messages before summarizing
 MAX_CONTEXT_LENGTH = 4000  # Max tokens for context to model
@@ -641,9 +666,17 @@ def create_gradio_interface():
                 # Chat display (larger)
                 chatbot = gr.Chatbot(
                     label="",
-                    height=600,
+                    height=500,
                     value=sessions.get(current_session_id, []),
                     show_label=False
+                )
+                
+                # Live thinking updates display - ALWAYS visible for live updates
+                thinking_display = gr.Markdown(
+                    value="",
+                    label="🧠 Live Thinking Updates",
+                    visible=True,
+                    elem_classes="thinking-display-box"
                 )
                 
                 # Message input area
@@ -685,6 +718,43 @@ def create_gradio_interface():
                     value=False,
                     info="Show model reasoning steps"
                 )
+                
+                # Divider
+                gr.Markdown("---")
+                
+                # Web Search & Thinking Configuration
+                gr.Markdown("**🎛️ Configuration**")
+                
+                with gr.Group():
+                    n_iterations = gr.Slider(
+                        label="Max Iterations",
+                        minimum=1,
+                        maximum=5,
+                        value=search_config['n_iterations'],
+                        step=1,
+                        info="Max loop iterations for gathering info"
+                    )
+                    
+                    max_results = gr.Slider(
+                        label="Max Results",
+                        minimum=1,
+                        maximum=10,
+                        value=search_config['max_results'],
+                        step=1,
+                        info="Search results per query"
+                    )
+                    
+                    info_threshold = gr.Slider(
+                        label="Info Length",
+                        minimum=100,
+                        maximum=2000,
+                        value=search_config['info_length_threshold'],
+                        step=100,
+                        info="Min chars for completeness"
+                    )
+                
+                # Apply config button
+                apply_config_btn = gr.Button("💾 Save Config", scale=1, size="sm", variant="secondary")
                 
                 # Divider
                 gr.Markdown("---")
@@ -884,10 +954,7 @@ def create_gradio_interface():
         def respond(message: str, chat_history, use_streaming: bool = True, use_context: bool = True, use_search: bool = False, use_thinking: bool = False):
             """Enhanced response handler with context, web search, thinking modes, and loop-based gathering."""
             if not message.strip():
-                if use_streaming:
-                    yield chat_history
-                else:
-                    return chat_history
+                yield chat_history, ""
                 return
             
             # Get current session history
@@ -897,19 +964,29 @@ def create_gradio_interface():
             if not chat_history:
                 chat_history = []
             
-            chat_history = chat_history + [{
+            # BUG FIX: Append user message properly instead of replacing
+            user_msg = {
                 "role": "user",
                 "content": message
-            }]
+            }
+            chat_history = chat_history + [user_msg]
             
             add_message_to_session("user", message)
+            
+            # Clear thinking updates from previous responses
+            with thinking_updates['lock']:
+                thinking_updates['current'].clear()
+            
+            # Yield updated history with user message and initial thinking display
+            thinking_display_text = "🤔 Starting processing...\n"
+            yield chat_history, thinking_display_text
             
             # Prepare message with web search and thinking
             augmented_message = message
             search_results = []
             loop_thinking_results = None
             
-            # Enhanced Web Search with Loop Thinking
+            # Enhanced Web Search with Loop Thinking - USE CONFIGURED PARAMETERS
             if use_search or use_thinking:
                 try:
                     # Step 1: Optimize search query
@@ -920,31 +997,63 @@ def create_gradio_interface():
                     # Step 2: Perform loop-based gathering if thinking enabled
                     if use_thinking:
                         print(f"💭 Starting loop-based gathering...")
-                        loop_engine = get_loop_thinking_engine()
+                        print(f"   Config: iterations={search_config['n_iterations']}, max_results={search_config['max_results']}, threshold={search_config['info_length_threshold']}")
                         
-                        # Define search function for loop
-                        def loop_search(query: str, max_results: int = 2):
+                        # Update thinking display with configuration
+                        update_thinking_display(f"🔄 Starting information gathering...\n⚙️ Config: {search_config['n_iterations']} iterations, {search_config['max_results']} results/iter, {search_config['info_length_threshold']} char threshold\n")
+                        
+                        # Yield thinking updates during search phase - FIX for live updates
+                        thinking_display_text = "".join(get_thinking_updates())
+                        yield chat_history, thinking_display_text
+                        
+                        # Import LoopThinkingEngine to create with configured parameters
+                        from thinking_engine import LoopThinkingEngine
+                        
+                        # Define search function for loop with CONFIGURED max_results
+                        def loop_search(query: str, max_results: int = None):
+                            if max_results is None:
+                                max_results = search_config['max_results']
+                            update_thinking_display(f"🌐 Searching: '{query}' (max {max_results} results)\n")
                             results = search_web(query, max_results=max_results)
                             # Enhance with content extraction
-                            return ContentExtractor.extract_from_results(results)
+                            extracted = ContentExtractor.extract_from_results(results)
+                            update_thinking_display(f"✅ Found {len(extracted)} results, extracting content...\n")
+                            return extracted
+                        
+                        # Create loop engine with CONFIGURED parameters (THIS WAS THE BUG)
+                        loop_engine = LoopThinkingEngine(
+                            max_iterations=search_config['n_iterations'],
+                            info_threshold=search_config['info_length_threshold']
+                        )
                         
                         loop_thinking_results = loop_engine.gather_information_loop(
                             query=optimized_query,
                             search_func=loop_search
                         )
                         
+                        # Yield thinking updates after search - FIX for live updates
+                        thinking_display_text = "".join(get_thinking_updates())
+                        yield chat_history, thinking_display_text
+                        
                         # Use gathered info as augmented message
                         if loop_thinking_results['gathered_info']:
+                            update_thinking_display(f"✅ Information gathering complete in {loop_thinking_results['iterations']} iterations\n")
                             search_context = f"📚 **Gathered Information** ({loop_thinking_results['iterations']} iterations):\n"
                             search_context += loop_thinking_results['gathered_info']
                             augmented_message = search_context + "\n\n" + message
                             search_results = []  # Results embedded in augmented message
                             
+                            # Yield final thinking updates - FIX for live updates
+                            thinking_display_text = "".join(get_thinking_updates())
+                            yield chat_history, thinking_display_text
+                            
                             print(f"✅ Gathered info in {loop_thinking_results['iterations']} iterations")
                     
                     # Step 3: Regular search if not using loop thinking
                     elif use_search:
-                        search_results = search_web(optimized_query, max_results=3)
+                        print(f"   Config: max_results={search_config['max_results']}")
+                        update_thinking_display(f"🌐 Searching: '{optimized_query}' (max {search_config['max_results']} results)\n")
+                        search_results = search_web(optimized_query, max_results=search_config['max_results'])
                         if search_results:
                             # Enhance results with content extraction
                             search_results = ContentExtractor.extract_from_results(search_results)
@@ -952,8 +1061,15 @@ def create_gradio_interface():
                             for i, result in enumerate(search_results, 1):
                                 content = result.get('full_content') or result.get('snippet', '')
                                 search_context += f"\n{i}. [{result.get('title', 'Source')}]({result.get('url', '#')})\n   {content[:200]}..."
+                            update_thinking_display(f"✅ Web search complete: {len(search_results)} results found\n")
                             augmented_message = search_context + "\n\n" + message
+                            
+                            # Yield thinking updates during web search - FIX for live updates
+                            thinking_display_text = "".join(get_thinking_updates())
+                            yield chat_history, thinking_display_text
+                            
                             print(f"🔍 Web search found {len(search_results)} results with content")
+
                 
                 except Exception as e:
                     print(f"⚠️  Search/thinking error: {str(e)}")
@@ -973,27 +1089,40 @@ def create_gradio_interface():
                 if use_streaming:
                     # Streaming mode with context - use generator
                     response_text = ""
-                    updated_history = chat_history  # Initialize to avoid unbound variable
+                    # BUG FIX: Properly append assistant message instead of replacing
                     for partial_response in generate_response_streaming(
                         augmented_message,
                         history=session_history if use_context else None
                     ):
                         response_text = partial_response
+                        
+                        # Get latest thinking updates
+                        latest_thinking_updates = get_thinking_updates()
+                        thinking_display_text = "".join(latest_thinking_updates)
+                        
                         # Format response with thinking steps if available
                         formatted_response = response_text
                         if loop_thinking_results:
                             thinking_steps = "\n".join([f"  • {s}" for s in loop_thinking_results['thinking_steps']])
                             formatted_response = f"**🔄 Gathering Steps:**\n{thinking_steps}\n\n**Response:**\n{response_text}"
                         
-                        updated_history = chat_history[:-1] + [{
-                            "role": "assistant",
-                            "content": formatted_response
-                        }]
-                        yield updated_history
+                        # BUG FIX: Append assistant message to existing history properly
+                        # Don't replace, just append to the end
+                        updated_history = list(chat_history)
+                        if updated_history and updated_history[-1]['role'] == 'assistant':
+                            # Update existing assistant message
+                            updated_history[-1]['content'] = formatted_response
+                        else:
+                            # Add new assistant message
+                            updated_history.append({
+                                "role": "assistant",
+                                "content": formatted_response
+                            })
+                        # FIX: Yield both chatbot history and thinking display updates
+                        yield updated_history, thinking_display_text
                     
-                    chat_history = updated_history
+                    # Final update to session
                     add_message_to_session("assistant", response_text)
-                    yield chat_history
                 else:
                     # Non-streaming mode - return result
                     response = generate_response(
@@ -1001,27 +1130,35 @@ def create_gradio_interface():
                         history=session_history if use_context else None,
                         stream=False
                     )
+                    
+                    # Get all thinking updates
+                    latest_thinking_updates = get_thinking_updates()
+                    thinking_display_text = "".join(latest_thinking_updates)
+                    
                     # Format response with thinking steps if available
                     formatted_response = response
                     if loop_thinking_results:
                         thinking_steps = "\n".join([f"  • {s}" for s in loop_thinking_results['thinking_steps']])
                         formatted_response = f"**🔄 Gathering Steps:**\n{thinking_steps}\n\n**Response:**\n{response}"
                     
-                    chat_history = chat_history + [{
+                    # BUG FIX: Append new assistant message to existing chat history
+                    chat_history = list(chat_history) + [{
                         "role": "assistant",
                         "content": formatted_response
                     }]
                     add_message_to_session("assistant", response)
-                    # Must yield for generator function
-                    yield chat_history
+                    # Must yield for generator function - FIX: include thinking display
+                    yield chat_history, thinking_display_text
                     
             except Exception as e:
                 error_msg = f"❌ Error: {str(e)}"
-                chat_history = chat_history + [{
+                # BUG FIX: Append error message properly
+                chat_history = list(chat_history) + [{
                     "role": "assistant",
                     "content": error_msg
                 }]
-                yield chat_history
+                # FIX: Yield with thinking display on error too
+                yield chat_history, f"❌ Error occurred: {error_msg}"
         
         def get_model_info_detailed():
             """Get detailed model information."""
@@ -1060,6 +1197,16 @@ def create_gradio_interface():
             """Sync chatbot with current session storage - ensures display matches backend."""
             return get_current_history()
         
+        def apply_search_config(n_iter: int, max_res: int, info_len: int):
+            """Apply search configuration settings."""
+            global search_config
+            search_config['n_iterations'] = n_iter
+            search_config['max_results'] = max_res
+            search_config['info_length_threshold'] = info_len
+            
+            msg = f"✅ Config saved:\n• Max iterations: {n_iter}\n• Max results: {max_res}\n• Info threshold: {info_len}"
+            return msg
+        
         # Event handlers for session management
         new_session_btn.click(
             on_new_session,
@@ -1084,29 +1231,42 @@ def create_gradio_interface():
             outputs=[session_dropdown, chatbot, session_info, sessions_list, status_text]
         )
         
-        # Event handlers for messaging
+        # Event handler for configuration - update global search_config and show confirmation
+        def apply_config_and_update(n_iter: int, max_res: int, info_len: int):
+            """Apply configuration and return confirmation message."""
+            global search_config
+            # Update global configuration
+            search_config['n_iterations'] = int(n_iter)
+            search_config['max_results'] = int(max_res)
+            search_config['info_length_threshold'] = int(info_len)
+            print(f"✅ Configuration updated: iterations={n_iter}, results={max_res}, threshold={info_len}")
+            return f"✅ Config applied:\n• Iterations: {n_iter}\n• Max Results: {max_res}\n• Info Threshold: {info_len} chars"
+        
+        apply_config_btn.click(
+            apply_config_and_update,
+            inputs=[n_iterations, max_results, info_threshold],
+            outputs=[status_text]
+        )
+        
+        # Event handlers for messaging - SIMPLIFIED to avoid interruption
         msg.submit(
             respond,
             [msg, chatbot, stream_toggle, context_toggle, search_toggle, thinking_toggle],
-            chatbot
+            [chatbot, thinking_display]
         ).then(
             clear_input_and_update,
-            outputs=[msg, session_info, session_dropdown]
-        ).then(
-            sync_chatbot_with_session,
-            outputs=[chatbot]
+            outputs=[msg, session_info, session_dropdown],
+            queue=False
         )
         
         submit_btn.click(
             respond,
             [msg, chatbot, stream_toggle, context_toggle, search_toggle, thinking_toggle],
-            chatbot
+            [chatbot, thinking_display]
         ).then(
             clear_input_and_update,
-            outputs=[msg, session_info, session_dropdown]
-        ).then(
-            sync_chatbot_with_session,
-            outputs=[chatbot]
+            outputs=[msg, session_info, session_dropdown],
+            queue=False
         )
         
         def on_switch_model(selected_model):
@@ -1185,18 +1345,37 @@ def create_gradio_interface():
             # Ensure database is initialized
             chat_ids = get_chat_display_list()
             
-            # If no chats exist, create one
+            # BUG FIX: Preserve selected conversation on server restart
+            # If no current session set, get the most recently modified chat
             if not chat_ids:
                 current_session_id = create_new_session()
                 current_chat_id = current_session_id
                 chat_ids = [current_session_id]
-            elif current_session_id is None:
-                current_session_id = chat_ids[0]
-                current_chat_id = current_session_id
-                switch_session(current_session_id)
+            elif current_session_id is None or current_session_id not in chat_ids:
+                # BUG FIX: Load most recently modified chat instead of first one
+                # This preserves user's last active conversation
+                if chat_db:
+                    chats = chat_db.get_all_chats()
+                    if chats:
+                        # Get most recently modified (should be first in list if db sorts correctly)
+                        current_session_id = chats[0]['id']
+                        current_chat_id = current_session_id
+                        switch_session(current_session_id)
+                    else:
+                        current_session_id = chat_ids[0] if chat_ids else create_new_session()
+                        current_chat_id = current_session_id
+                else:
+                    current_session_id = chat_ids[0] if chat_ids else create_new_session()
+                    current_chat_id = current_session_id
             
             choices = get_dropdown_choices()
-            display_value = choices[0] if choices else "New Chat"
+            # Get display value for current session
+            display_value = None
+            if current_session_id:
+                chat_titles = get_chat_titles_dict()
+                display_value = f"{current_session_id[:4]}... - {chat_titles.get(current_session_id, 'Chat')}"
+            
+            display_value = display_value or (choices[0] if choices else "New Chat")
             history = get_current_history()
             
             return (
