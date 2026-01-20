@@ -18,7 +18,7 @@ import hashlib
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Tuple
 from functools import lru_cache
-from duckduckgo_search import DDGS
+from ddgs import DDGS
 import logging
 
 # Configure logging
@@ -87,7 +87,7 @@ class WebSearcher:
     
     def __init__(self, enable_cache: bool = True, cache_ttl_minutes: int = CACHE_TTL_MINUTES):
         """Initialize web searcher."""
-        self.ddgs = DDGS(timeout=SEARCH_TIMEOUT_SECONDS)
+        self.ddgs = DDGS(timeout=SEARCH_TIMEOUT_SECONDS, proxy=None)
         self.cache = SearchCache(cache_ttl_minutes) if enable_cache else None
         self.enabled = True
         logger.info("🔍 WebSearcher initialized (DuckDuckGo)")
@@ -135,7 +135,7 @@ class WebSearcher:
             
             # Perform DuckDuckGo search
             results = self.ddgs.text(
-                keywords=query,
+                query=query,
                 max_results=max_results
             )
             

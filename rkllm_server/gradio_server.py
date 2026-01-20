@@ -909,6 +909,7 @@ def create_gradio_interface():
             search_results = []
             
             # Perform web search if enabled
+            print(use_search)
             if use_search:
                 try:
                     search_results = search_web(message, max_results=3)
