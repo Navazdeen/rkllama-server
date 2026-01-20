@@ -1,407 +1,610 @@
-import ctypes
+"""
+Enhanced Gradio interface for RKLLM model inference.
+
+This server exposes the RKLLM model through a Gradio web interface.
+It uses the same underlying inference engine as the Flask server.
+
+Features:
+- Web-based chat interface with rich history display
+- Real-time streaming responses
+- Multi-session support (independent chat sessions)
+- Conversation context management
+- Automatic history summarization when too long
+- Enhanced UI elements with better organization
+- Model configuration options
+"""
+
 import sys
 import os
-import subprocess
-import resource
+import argparse
 import threading
 import time
+import json
 import gradio as gr
-import argparse
+from typing import List, Tuple, Optional, Any, Dict
+from datetime import datetime
+from rkllm import RKLLM
+import rkllm as rkllm_module
 
-# PROMPT_TEXT_PREFIX = "<|im_start|>system You are a helpful assistant. <|im_end|> <|im_start|>user"
-# PROMPT_TEXT_POSTFIX = "<|im_end|><|im_start|>assistant"
+# Global variables
+rkllm_model = None
+model_name = None
+target_platform = None
+lock = threading.Lock()
 
-# Set environment variables
-os.environ["GRADIO_SERVER_NAME"] = "0.0.0.0"
-os.environ["GRADIO_SERVER_PORT"] = "8080"
+# Session management
+sessions: Dict[str, List[Dict]] = {}
+current_session_id = "session_1"
+session_counter = 1
 
-# Set the dynamic library path
-rkllm_lib = ctypes.CDLL('lib/librkllmrt.so')
+# Configuration
+MAX_HISTORY_MESSAGES = 20  # Keep last N messages before summarizing
+MAX_CONTEXT_LENGTH = 4000  # Max tokens for context to model
 
-# Define the structures from the library
-RKLLM_Handle_t = ctypes.c_void_p
-userdata = ctypes.c_void_p(None)
 
-LLMCallState = ctypes.c_int
-LLMCallState.RKLLM_RUN_NORMAL  = 0
-LLMCallState.RKLLM_RUN_WAITING  = 1
-LLMCallState.RKLLM_RUN_FINISH  = 2
-LLMCallState.RKLLM_RUN_ERROR   = 3
-
-RKLLMInputType = ctypes.c_int
-RKLLMInputType.RKLLM_INPUT_PROMPT      = 0
-RKLLMInputType.RKLLM_INPUT_TOKEN       = 1
-RKLLMInputType.RKLLM_INPUT_EMBED       = 2
-RKLLMInputType.RKLLM_INPUT_MULTIMODAL  = 3
-
-RKLLMInferMode = ctypes.c_int
-RKLLMInferMode.RKLLM_INFER_GENERATE = 0
-RKLLMInferMode.RKLLM_INFER_GET_LAST_HIDDEN_LAYER = 1
-RKLLMInferMode.RKLLM_INFER_GET_LOGITS = 2
-
-class RKLLMExtendParam(ctypes.Structure):
-    _fields_ = [
-        ("base_domain_id", ctypes.c_int32),
-        ("embed_flash", ctypes.c_int8),
-        ("enabled_cpus_num", ctypes.c_int8),
-        ("enabled_cpus_mask", ctypes.c_uint32),
-        ("n_batch", ctypes.c_uint8),
-        ("use_cross_attn", ctypes.c_int8),
-        ("reserved", ctypes.c_uint8 * 104)
-    ]
-
-class RKLLMParam(ctypes.Structure):
-    _fields_ = [
-        ("model_path", ctypes.c_char_p),
-        ("max_context_len", ctypes.c_int32),
-        ("max_new_tokens", ctypes.c_int32),
-        ("top_k", ctypes.c_int32),
-        ("n_keep", ctypes.c_int32),
-        ("top_p", ctypes.c_float),
-        ("temperature", ctypes.c_float),
-        ("repeat_penalty", ctypes.c_float),
-        ("frequency_penalty", ctypes.c_float),
-        ("presence_penalty", ctypes.c_float),
-        ("mirostat", ctypes.c_int32),
-        ("mirostat_tau", ctypes.c_float),
-        ("mirostat_eta", ctypes.c_float),
-        ("skip_special_token", ctypes.c_bool),
-        ("is_async", ctypes.c_bool),
-        ("img_start", ctypes.c_char_p),
-        ("img_end", ctypes.c_char_p),
-        ("img_content", ctypes.c_char_p),
-        ("extend_param", RKLLMExtendParam),
-    ]
-
-class RKLLMLoraAdapter(ctypes.Structure):
-    _fields_ = [
-        ("lora_adapter_path", ctypes.c_char_p),
-        ("lora_adapter_name", ctypes.c_char_p),
-        ("scale", ctypes.c_float)
-    ]
-
-class RKLLMEmbedInput(ctypes.Structure):
-    _fields_ = [
-        ("embed", ctypes.POINTER(ctypes.c_float)),
-        ("n_tokens", ctypes.c_size_t)
-    ]
-
-class RKLLMTokenInput(ctypes.Structure):
-    _fields_ = [
-        ("input_ids", ctypes.POINTER(ctypes.c_int32)),
-        ("n_tokens", ctypes.c_size_t)
-    ]
-
-class RKLLMMultiModalInput(ctypes.Structure):
-    _fields_ = [
-        ("prompt", ctypes.c_char_p),
-        ("image_embed", ctypes.POINTER(ctypes.c_float)),
-        ("n_image_tokens", ctypes.c_size_t),
-        ("n_image", ctypes.c_size_t),
-        ("image_width", ctypes.c_size_t),
-        ("image_height", ctypes.c_size_t)
-    ]
-
-class RKLLMInputUnion(ctypes.Union):
-    _fields_ = [
-        ("prompt_input", ctypes.c_char_p),
-        ("embed_input", RKLLMEmbedInput),
-        ("token_input", RKLLMTokenInput),
-        ("multimodal_input", RKLLMMultiModalInput)
-    ]
-
-class RKLLMInput(ctypes.Structure):
-    _fields_ = [
-        ("role", ctypes.c_char_p),
-        ("enable_thinking", ctypes.c_bool),
-        ("input_type", RKLLMInputType),
-        ("input_data", RKLLMInputUnion)
-    ]
-
-class RKLLMLoraParam(ctypes.Structure):
-    _fields_ = [
-        ("lora_adapter_name", ctypes.c_char_p)
-    ]
-
-class RKLLMPromptCacheParam(ctypes.Structure):
-    _fields_ = [
-        ("save_prompt_cache", ctypes.c_int),
-        ("prompt_cache_path", ctypes.c_char_p)
-    ]
-
-class RKLLMInferParam(ctypes.Structure):
-    _fields_ = [
-        ("mode", RKLLMInferMode),
-        ("lora_params", ctypes.POINTER(RKLLMLoraParam)),
-        ("prompt_cache_params", ctypes.POINTER(RKLLMPromptCacheParam)),
-        ("keep_history", ctypes.c_int)
-    ]
-
-class RKLLMResultLastHiddenLayer(ctypes.Structure):
-    _fields_ = [
-        ("hidden_states", ctypes.POINTER(ctypes.c_float)),
-        ("embd_size", ctypes.c_int),
-        ("num_tokens", ctypes.c_int)
-    ]
-
-class RKLLMResultLogits(ctypes.Structure):
-    _fields_ = [
-        ("logits", ctypes.POINTER(ctypes.c_float)),
-        ("vocab_size", ctypes.c_int),
-        ("num_tokens", ctypes.c_int)
-    ]
-
-class RKLLMPerfStat(ctypes.Structure):
-    _fields_ = [
-        ("prefill_time_ms", ctypes.c_float),
-        ("prefill_tokens", ctypes.c_int),
-        ("generate_time_ms", ctypes.c_float),
-        ("generate_tokens", ctypes.c_int),
-        ("memory_usage_mb", ctypes.c_float)
-    ]
-
-class RKLLMResult(ctypes.Structure):
-    _fields_ = [
-        ("text", ctypes.c_char_p),
-        ("token_id", ctypes.c_int),
-        ("last_hidden_layer", RKLLMResultLastHiddenLayer),
-        ("logits", RKLLMResultLogits),
-        ("perf", RKLLMPerfStat)
-    ]
-
-# Define global variables to store the callback function output for displaying in the Gradio interface
-global_text = []
-global_state = -1
-split_byte_data = bytes(b"") # Used to store the segmented byte data
-
-# Define the callback function
-def callback_impl(result, userdata, state):
-    global global_text, global_state, split_byte_data
-    if state == LLMCallState.RKLLM_RUN_FINISH:
-        global_state = state
-        print("\n")
-        sys.stdout.flush()
-    elif state == LLMCallState.RKLLM_RUN_ERROR:
-        global_state = state
-        print("run error")
-        sys.stdout.flush()
-    elif state == LLMCallState.RKLLM_RUN_NORMAL:
-        global_state = state
-        global_text += result.contents.text.decode('utf-8')
-    return 0
+def initialize_model(model_path: str, platform: str, model_id: str = "qwen") -> bool:
+    """Initialize the RKLLM model."""
+    global rkllm_model, model_name, target_platform, sessions, current_session_id
     
-
-# Connect the callback function between the Python side and the C++ side
-callback_type = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.POINTER(RKLLMResult), ctypes.c_void_p, ctypes.c_int)
-callback = callback_type(callback_impl)
-
-# Define the RKLLM class, which includes initialization, inference, and release operations for the RKLLM model in the dynamic library
-class RKLLM(object):
-    def __init__(self, model_path, lora_model_path = None, prompt_cache_path = None, platform = "rk3588"):
-        rkllm_param = RKLLMParam()
-        rkllm_param.model_path = bytes(model_path, 'utf-8')
-
-        rkllm_param.max_context_len = 4096
-        rkllm_param.max_new_tokens = 4096
-        rkllm_param.skip_special_token = True
-        rkllm_param.n_keep = -1
-        rkllm_param.top_k = 1
-        rkllm_param.top_p = 0.9
-        rkllm_param.temperature = 0.8
-        rkllm_param.repeat_penalty = 1.1
-        rkllm_param.frequency_penalty = 0.0
-        rkllm_param.presence_penalty = 0.0
-
-        rkllm_param.mirostat = 0
-        rkllm_param.mirostat_tau = 5.0
-        rkllm_param.mirostat_eta = 0.1
-
-        rkllm_param.is_async = False
-
-        rkllm_param.img_start = "".encode('utf-8')
-        rkllm_param.img_end = "".encode('utf-8')
-        rkllm_param.img_content = "".encode('utf-8')
-
-        rkllm_param.extend_param.base_domain_id = 0
-        rkllm_param.extend_param.embed_flash = 1
-        rkllm_param.extend_param.n_batch = 1
-        rkllm_param.extend_param.use_cross_attn = 0
-        rkllm_param.extend_param.enabled_cpus_num = 4
-        if platform.lower() in ["rk3576", "rk3588"]:
-            rkllm_param.extend_param.enabled_cpus_mask = (1 << 4)|(1 << 5)|(1 << 6)|(1 << 7)
-        else:
-            rkllm_param.extend_param.enabled_cpus_mask = (1 << 0)|(1 << 1)|(1 << 2)|(1 << 3)
-        self.handle = RKLLM_Handle_t()
-
-        self.rkllm_init = rkllm_lib.rkllm_init
-        self.rkllm_init.argtypes = [ctypes.POINTER(RKLLM_Handle_t), ctypes.POINTER(RKLLMParam), callback_type]
-        self.rkllm_init.restype = ctypes.c_int
-        ret = self.rkllm_init(ctypes.byref(self.handle), ctypes.byref(rkllm_param), callback)
-        if (ret != 0):
-            print("\nrkllm init failed\n")
-            exit(0)
-        else:
-            print("\nrkllm init success!\n")
-        self.rkllm_run = rkllm_lib.rkllm_run
-        self.rkllm_run.argtypes = [RKLLM_Handle_t, ctypes.POINTER(RKLLMInput), ctypes.POINTER(RKLLMInferParam), ctypes.c_void_p]
-        self.rkllm_run.restype = ctypes.c_int
-
-        self.set_chat_template = rkllm_lib.rkllm_set_chat_template
-        self.set_chat_template.argtypes = [RKLLM_Handle_t, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p]
-        self.set_chat_template.restype = ctypes.c_int
+    try:
+        print(f"🔧 Initializing RKLLM model from {model_path}...")
+        print(f"   Platform: {platform}")
         
-        system_prompt = "<|im_start|>system You are a helpful assistant. <|im_end|>"
-        prompt_prefix = "<|im_start|>user"
-        prompt_postfix = "<|im_end|><|im_start|>assistant"
-        # self.set_chat_template(self.handle, ctypes.c_char_p(system_prompt.encode('utf-8')), ctypes.c_char_p(prompt_prefix.encode('utf-8')), ctypes.c_char_p(prompt_postfix.encode('utf-8')))
-
-        self.rkllm_destroy = rkllm_lib.rkllm_destroy
-        self.rkllm_destroy.argtypes = [RKLLM_Handle_t]
-        self.rkllm_destroy.restype = ctypes.c_int
-
-        rkllm_lora_params = None
-        if lora_model_path:
-            lora_adapter_name = "test"
-            lora_adapter = RKLLMLoraAdapter()
-            ctypes.memset(ctypes.byref(lora_adapter), 0, ctypes.sizeof(RKLLMLoraAdapter))
-            lora_adapter.lora_adapter_path = ctypes.c_char_p((lora_model_path).encode('utf-8'))
-            lora_adapter.lora_adapter_name = ctypes.c_char_p((lora_adapter_name).encode('utf-8'))
-            lora_adapter.scale = 1.0
-
-            rkllm_load_lora = rkllm_lib.rkllm_load_lora
-            rkllm_load_lora.argtypes = [RKLLM_Handle_t, ctypes.POINTER(RKLLMLoraAdapter)]
-            rkllm_load_lora.restype = ctypes.c_int
-            rkllm_load_lora(self.handle, ctypes.byref(lora_adapter))
-            rkllm_lora_params = RKLLMLoraParam()
-            rkllm_lora_params.lora_adapter_name = ctypes.c_char_p((lora_adapter_name).encode('utf-8'))
+        rkllm_model = RKLLM(model_path=model_path)
+        model_name = model_id
+        target_platform = platform
         
-        self.rkllm_infer_params = RKLLMInferParam()
-        ctypes.memset(ctypes.byref(self.rkllm_infer_params), 0, ctypes.sizeof(RKLLMInferParam))
-        self.rkllm_infer_params.mode = RKLLMInferMode.RKLLM_INFER_GENERATE
-        self.rkllm_infer_params.lora_params = ctypes.pointer(rkllm_lora_params) if rkllm_lora_params else None
-        self.rkllm_infer_params.keep_history = 0
+        # Initialize default session
+        sessions["session_1"] = []
+        current_session_id = "session_1"
+        
+        print("✅ Model initialized successfully")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Failed to initialize model: {str(e)}")
+        return False
 
-        self.prompt_cache_path = None
-        if prompt_cache_path:
-            self.prompt_cache_path = prompt_cache_path
 
-            rkllm_load_prompt_cache = rkllm_lib.rkllm_load_prompt_cache
-            rkllm_load_prompt_cache.argtypes = [RKLLM_Handle_t, ctypes.c_char_p]
-            rkllm_load_prompt_cache.restype = ctypes.c_int
-            rkllm_load_prompt_cache(self.handle, ctypes.c_char_p((prompt_cache_path).encode('utf-8')))
+def create_new_session() -> str:
+    """Create a new chat session."""
+    global session_counter, current_session_id, sessions
+    session_counter += 1
+    session_id = f"session_{session_counter}"
+    sessions[session_id] = []
+    current_session_id = session_id
+    return session_id
 
-    def run(self, prompt):
-        rkllm_input = RKLLMInput()
-        rkllm_input.role = "user".encode('utf-8')
-        rkllm_input.enable_thinking = ctypes.c_bool(False)
-        rkllm_input.input_mode = RKLLMInputType.RKLLM_INPUT_PROMPT
-        rkllm_input.input_data.prompt_input = ctypes.c_char_p(prompt.encode('utf-8'))
-        self.rkllm_run(self.handle, ctypes.byref(rkllm_input), ctypes.byref(self.rkllm_infer_params), None)
+
+def get_session_list() -> List[str]:
+    """Get list of all session IDs."""
+    return list(sessions.keys())
+
+
+def switch_session(session_id: str) -> Tuple[List[Dict], str]:
+    """Switch to a different session."""
+    global current_session_id
+    if session_id in sessions:
+        current_session_id = session_id
+        return sessions[session_id], session_id
+    return [], current_session_id
+
+
+def delete_session(session_id: str) -> str:
+    """Delete a session."""
+    global current_session_id, sessions
+    if session_id in sessions and len(sessions) > 1:
+        del sessions[session_id]
+        if current_session_id == session_id:
+            current_session_id = list(sessions.keys())[0]
+        return f"✅ Session {session_id} deleted"
+    return "❌ Cannot delete session"
+
+
+def get_current_history() -> List[Dict]:
+    """Get current session history."""
+    return sessions.get(current_session_id, [])
+
+
+def build_context_from_history(history: List[Dict], max_messages: int = 10) -> str:
+    """Build context string from recent history for model input."""
+    if not history:
+        return ""
+    
+    # Use only last N messages to avoid too long context
+    recent_messages = history[-max_messages:]
+    context = "Recent conversation:\n"
+    
+    for msg in recent_messages:
+        role = "User" if msg.get("role") == "user" else "Assistant"
+        content = msg.get("content", "")
+        # Truncate very long messages
+        if len(content) > 200:
+            content = content[:200] + "..."
+        context += f"{role}: {content}\n"
+    
+    return context
+
+
+def summarize_history(history: List[Dict]) -> List[Dict]:
+    """Summarize old messages when history gets too long."""
+    if len(history) <= MAX_HISTORY_MESSAGES:
+        return history
+    
+    # Keep only recent messages, summarize older ones
+    messages_to_keep = history[-10:]  # Keep last 10 messages
+    
+    # Create a summary message of older conversations
+    old_messages = history[:-10]
+    summary_text = f"[📝 Conversation Summary: {len(old_messages)} previous messages discussing "
+    
+    # Extract key topics from old messages
+    topics = set()
+    for msg in old_messages:
+        content = msg.get("content", "")[:50]  # First 50 chars
+        if content:
+            topics.add(content)
+    
+    summary_text += ", ".join(list(topics)[:3]) + "]"
+    
+    summary_msg = {
+        "role": "system",
+        "content": summary_text,
+        "timestamp": datetime.now().isoformat(),
+        "is_summary": True
+    }
+    
+    return [summary_msg] + messages_to_keep
+
+
+def add_message_to_session(role: str, content: str) -> None:
+    """Add a message to current session history."""
+    global sessions, current_session_id
+    
+    message = {
+        "role": role,
+        "content": content,
+        "timestamp": datetime.now().isoformat()
+    }
+    
+    sessions[current_session_id].append(message)
+    
+    # Summarize if too long
+    if len(sessions[current_session_id]) > MAX_HISTORY_MESSAGES:
+        sessions[current_session_id] = summarize_history(sessions[current_session_id])
+
+
+def generate_response(prompt: str, history: Optional[List[Dict]] = None, stream: bool = True) -> str:
+    """Generate response from the model with conversation context."""
+    global rkllm_model, lock
+    
+    if rkllm_model is None:
+        return "❌ Model not initialized"
+    
+    try:
+        with lock:
+            # Build context from history
+            context = ""
+            if history:
+                context = build_context_from_history(history)
+            
+            # Combine context with current prompt
+            full_prompt = context + prompt if context else prompt
+            
+            # Reset global state
+            rkllm_module.global_text = []
+            rkllm_module.global_state = -1
+            
+            # Run model inference in a thread
+            model_thread = threading.Thread(
+                target=rkllm_model.run,
+                args=('user', False, full_prompt)
+            )
+            model_thread.start()
+            
+            # Collect output with polling
+            full_output = ""
+            while model_thread.is_alive() or len(rkllm_module.global_text) > 0:
+                while len(rkllm_module.global_text) > 0:
+                    full_output += rkllm_module.global_text.pop(0)
+                    time.sleep(0.001)
+                
+                if model_thread.is_alive():
+                    time.sleep(0.01)
+            
+            model_thread.join()
+            response = full_output
+            
+        return response
+        
+    except Exception as e:
+        return f"❌ Error: {str(e)}"
+
+
+def generate_response_streaming(prompt: str, history: Optional[List[Dict]] = None):
+    """Generate response with streaming (yields tokens in real-time)."""
+    global rkllm_model, lock
+    
+    if rkllm_model is None:
+        yield "❌ Model not initialized"
         return
+    
+    try:
+        with lock:
+            # Build context from history
+            context = ""
+            if history:
+                context = build_context_from_history(history)
+            
+            # Combine context with current prompt
+            full_prompt = context + prompt if context else prompt
+            
+            # Reset global state
+            rkllm_module.global_text = []
+            rkllm_module.global_state = -1
+            
+            # Run model inference in a thread
+            model_thread = threading.Thread(
+                target=rkllm_model.run,
+                args=('user', False, full_prompt)
+            )
+            model_thread.start()
+            
+            # Stream output token by token
+            streamed_output = ""
+            while model_thread.is_alive() or len(rkllm_module.global_text) > 0:
+                while len(rkllm_module.global_text) > 0:
+                    token = rkllm_module.global_text.pop(0)
+                    streamed_output += token
+                    yield streamed_output
+                    time.sleep(0.001)
+                
+                if model_thread.is_alive():
+                    time.sleep(0.01)
+            
+            model_thread.join()
+            
+    except Exception as e:
+        yield f"❌ Error: {str(e)}"
 
-    def release(self):
-        self.rkllm_destroy(self.handle)
+
+def create_gradio_interface():
+    """Create the enhanced Gradio interface with sessions and history."""
+    with gr.Blocks(title=f"RKLLM Chat - {model_name}", theme=gr.themes.Soft()) as demo:
+        # Header
+        gr.Markdown(f"""
+        # 🤖 RKLLM Advanced Chat Interface
+        
+        **Model:** {model_name} | **Platform:** {target_platform}
+        
+        Multi-session chat with conversation context, history summarization, and real-time streaming.
+        """)
+        
+        # Session management row
+        with gr.Row():
+            with gr.Column(scale=2):
+                session_dropdown = gr.Dropdown(
+                    label="📋 Chat Sessions",
+                    choices=["session_1"],
+                    value="session_1"
+                )
+            with gr.Column(scale=1):
+                new_session_btn = gr.Button("➕ New Session", scale=1)
+            with gr.Column(scale=1):
+                delete_session_btn = gr.Button("🗑️ Delete", scale=1)
+        
+        # Session info
+        session_info = gr.Textbox(
+            label="📊 Session Info",
+            value="Messages: 0 | Last updated: -",
+            interactive=False
+        )
+        
+        # Main chat area - Initialize with current session history
+        chatbot = gr.Chatbot(
+            label="💬 Conversation",
+            height=500,
+            value=sessions.get(current_session_id, [])
+        )
+        
+        # Input section with improved layout
+        with gr.Row():
+            msg = gr.Textbox(
+                label="📝 Message",
+                placeholder="Type your message here...",
+                lines=3,
+                scale=4,
+                show_label=True
+            )
+            with gr.Column(scale=1):
+                submit_btn = gr.Button("📤 Send", scale=1, size="lg")
+        
+        # Controls section
+        with gr.Row():
+            stream_toggle = gr.Checkbox(
+                label="🌊 Streaming",
+                value=True,
+                scale=1
+            )
+            context_toggle = gr.Checkbox(
+                label="🧠 Use Context",
+                value=True,
+                scale=1
+            )
+            clear_btn = gr.Button("🧹 Clear Chat", scale=1)
+            info_btn = gr.Button("ℹ️ Model Info", scale=1)
+        
+        # Status area
+        status_text = gr.Textbox(
+            label="Status",
+            value="Ready",
+            interactive=False,
+            lines=1
+        )
+        
+        def update_session_info():
+            """Update session information display."""
+            history = get_current_history()
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            return f"Messages: {len(history)} | Last updated: {timestamp}"
+        
+        def update_session_dropdown():
+            """Update the session dropdown options."""
+            sessions_list = get_session_list()
+            return gr.Dropdown(choices=sessions_list, value=current_session_id)
+        
+        def on_new_session():
+            """Create a new session and update UI."""
+            session_id = create_new_session()
+            return update_session_dropdown(), [], update_session_info(), f"✅ Created {session_id}"
+        
+        def on_switch_session(session_id):
+            """Switch to selected session."""
+            history, _ = switch_session(session_id)
+            return history, update_session_info(), f"✅ Switched to {session_id}"
+        
+        def on_delete_session(session_id):
+            """Delete selected session."""
+            msg_result = delete_session(session_id)
+            sessions_list = get_session_list()
+            return gr.Dropdown(choices=sessions_list, value=current_session_id), [], update_session_info(), msg_result
+        
+        def respond(message: str, chat_history, use_streaming: bool = True, use_context: bool = True):
+            """Enhanced response handler with context and sessions."""
+            if not message.strip():
+                if use_streaming:
+                    yield chat_history
+                else:
+                    return chat_history
+                return
+            
+            # Get current session history
+            session_history = get_current_history()
+            
+            # Add user message to both display and session
+            if not chat_history:
+                chat_history = []
+            
+            chat_history = chat_history + [{
+                "role": "user",
+                "content": message
+            }]
+            
+            add_message_to_session("user", message)
+            
+            # Generate bot response
+            try:
+                if use_streaming:
+                    # Streaming mode with context - use generator
+                    response_text = ""
+                    for partial_response in generate_response_streaming(
+                        message,
+                        history=session_history if use_context else None
+                    ):
+                        response_text = partial_response
+                        updated_history = chat_history[:-1] + [{
+                            "role": "assistant",
+                            "content": response_text
+                        }]
+                        yield updated_history
+                    
+                    chat_history = updated_history
+                    add_message_to_session("assistant", response_text)
+                    yield chat_history
+                else:
+                    # Non-streaming mode - return result
+                    response = generate_response(
+                        message,
+                        history=session_history if use_context else None,
+                        stream=False
+                    )
+                    chat_history = chat_history + [{
+                        "role": "assistant",
+                        "content": response
+                    }]
+                    add_message_to_session("assistant", response)
+                    # Must yield for generator function
+                    yield chat_history
+                    
+            except Exception as e:
+                error_msg = f"❌ Error: {str(e)}"
+                chat_history = chat_history + [{
+                    "role": "assistant",
+                    "content": error_msg
+                }]
+                yield chat_history
+        
+        def get_model_info():
+            """Get detailed model information."""
+            return f"""**RKLLM Model Information**
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📛 Name: {model_name}
+🏗️  Platform: {target_platform}
+⚙️  Status: ✅ Running
+🌐 Interface: Gradio (Enhanced)
+📊 Sessions: {len(sessions)}
+💾 Context Length: {MAX_CONTEXT_LENGTH} chars
+📝 Max History: {MAX_HISTORY_MESSAGES} messages
+            """
+        
+        # Event handlers
+        new_session_btn.click(
+            on_new_session,
+            outputs=[session_dropdown, chatbot, session_info, status_text]
+        )
+        
+        session_dropdown.change(
+            on_switch_session,
+            inputs=[session_dropdown],
+            outputs=[chatbot, session_info, status_text]
+        )
+        
+        delete_session_btn.click(
+            on_delete_session,
+            inputs=[session_dropdown],
+            outputs=[session_dropdown, chatbot, session_info, status_text]
+        )
+        
+        def clear_input_and_update():
+            """Clear input box and update session info."""
+            return "", update_session_info()
+        
+        def reset_chat_and_update():
+            """Reset chat and update info."""
+            return update_session_info()
+        
+        def sync_chatbot_with_session():
+            """Sync chatbot with current session storage - ensures display matches backend."""
+            return get_current_history()
+        
+        msg.submit(respond, [msg, chatbot, stream_toggle, context_toggle], chatbot).then(
+            clear_input_and_update,
+            outputs=[msg, session_info]
+        ).then(
+            sync_chatbot_with_session,
+            outputs=[chatbot]
+        )
+        
+        submit_btn.click(respond, [msg, chatbot, stream_toggle, context_toggle], chatbot).then(
+            clear_input_and_update,
+            outputs=[msg, session_info]
+        ).then(
+            sync_chatbot_with_session,
+            outputs=[chatbot]
+        )
+        
+        clear_btn.click(lambda: [], None, chatbot).then(
+            reset_chat_and_update,
+            outputs=[session_info]
+        )
+        
+        info_btn.click(get_model_info, outputs=gr.Textbox(label="Model Info", lines=6))
+        
+        # Load event to refresh UI on page load/refresh
+        def load_interface():
+            """Load interface with current session data on page load."""
+            history = get_current_history()
+            sessions_list = get_session_list()
+            return (
+                gr.Dropdown(choices=sessions_list, value=current_session_id),
+                history,
+                update_session_info()
+            )
+        
+        demo.load(
+            load_interface,
+            outputs=[session_dropdown, chatbot, session_info]
+        )
+    
+    return demo
+
+
+def main():
+    """Main entry point."""
+    parser = argparse.ArgumentParser(
+        description="RKLLM Gradio Server"
+    )
+    parser.add_argument(
+        "--rkllm_model_path",
+        type=str,
+        required=True,
+        help="Path to RKLLM model file"
+    )
+    parser.add_argument(
+        "--target_platform",
+        type=str,
+        required=True,
+        choices=["rk3588", "rk3576", "rk3562", "rv1126b"],
+        help="Target platform"
+    )
+    parser.add_argument(
+        "--model_name",
+        type=str,
+        default="qwen",
+        help="Model name (default: qwen)"
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=7860,
+        help="Server port (default: 7860)"
+    )
+    parser.add_argument(
+        "--host",
+        type=str,
+        default="0.0.0.0",
+        help="Server host (default: 0.0.0.0)"
+    )
+    parser.add_argument(
+        "--lora_model_path",
+        type=str,
+        default=None,
+        help="Path to LoRA model (optional)"
+    )
+    parser.add_argument(
+        "--prompt_cache_path",
+        type=str,
+        default=None,
+        help="Path to prompt cache file (optional)"
+    )
+    
+    args = parser.parse_args()
+    
+    print("="*60)
+    print("🚀 RKLLM Gradio Server Starting")
+    print("="*60)
+    
+    # Initialize model
+    if not initialize_model(
+        args.rkllm_model_path,
+        args.target_platform,
+        args.model_name
+    ):
+        print("❌ Failed to initialize model")
+        sys.exit(1)
+    
+    # Create Gradio interface
+    print(f"📱 Creating Gradio interface...")
+    demo = create_gradio_interface()
+    
+    # Launch server
+    print(f"🌐 Launching server on {args.host}:{args.port}")
+    print("📖 Access interface at: http://localhost:7860")
+    print("="*60)
+    
+    try:
+        demo.launch(
+            server_name=args.host,
+            server_port=args.port,
+            share=False,
+            show_error=True
+        )
+    except KeyboardInterrupt:
+        print("\n👋 Shutting down server...")
+    except Exception as e:
+        print(f"❌ Error: {str(e)}")
+        sys.exit(1)
+
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--rkllm_model_path', type=str, required=True, help='Absolute path of the converted RKLLM model on the Linux board;')
-    parser.add_argument('--target_platform', type=str, required=True, help='Target platform: e.g., rk3588/rk3576;')
-    parser.add_argument('--lora_model_path', type=str, help='Absolute path of the lora_model on the Linux board;')
-    parser.add_argument('--prompt_cache_path', type=str, help='Absolute path of the prompt_cache file on the Linux board;')
-    args = parser.parse_args()
-
-    if not os.path.exists(args.rkllm_model_path):
-        print("Error: Please provide the correct rkllm model path, and ensure it is the absolute path on the board.")
-        sys.stdout.flush()
-        exit()
-
-    if not (args.target_platform in ["rk3588", "rk3576", "rv1126b", "rk3562"]):
-        print("Error: Please specify the correct target platform: rk3588/rk3576/rv1126b/rk3562.")
-        sys.stdout.flush()
-        exit()
-
-    if args.lora_model_path:
-        if not os.path.exists(args.lora_model_path):
-            print("Error: Please provide the correct lora_model path, and advise it is the absolute path on the board.")
-            sys.stdout.flush()
-            exit()
-
-    if args.prompt_cache_path:
-        if not os.path.exists(args.prompt_cache_path):
-            print("Error: Please provide the correct prompt_cache_file path, and advise it is the absolute path on the board.")
-            sys.stdout.flush()
-            exit()
-
-    # Fix frequency
-    command = "sudo bash fix_freq_{}.sh".format(args.target_platform)
-    subprocess.run(command, shell=True)
-
-    # Set resource limit
-    resource.setrlimit(resource.RLIMIT_NOFILE, (102400, 102400))
-
-    # Initialize RKLLM model
-    print("=========init....===========")
-    sys.stdout.flush()
-    model_path = args.rkllm_model_path
-    rkllm_model = RKLLM(model_path, args.lora_model_path, args.prompt_cache_path, args.target_platform)
-    print("==============================")
-    sys.stdout.flush()
-
-    # Record the user's input prompt        
-    def get_user_input(user_message, history):
-        history = history + [[user_message, None]]
-        return "", history
-
-    # Retrieve the output from the RKLLM model and print it in a streaming manner
-    def get_RKLLM_output(history):
-        # Link global variables to retrieve the output information from the callback function
-        global global_text, global_state
-        global_text = []
-        global_state = -1
-
-        # Create a thread for model inference
-        model_thread = threading.Thread(target=rkllm_model.run, args=(history[-1][0],))
-        model_thread.start()
-
-        # history[-1][1] represents the current dialogue
-        history[-1][1] = ""
-        
-        # Wait for the model to finish running and periodically check the inference thread of the model
-        model_thread_finished = False
-        while not model_thread_finished:
-            while len(global_text) > 0:
-                history[-1][1] += global_text.pop(0)
-                time.sleep(0.005)
-                # Gradio automatically pushes the result returned by the yield statement when calling the then method
-                yield history
-
-            model_thread.join(timeout=0.005)
-            model_thread_finished = not model_thread.is_alive()
-
-    # Create a Gradio interface
-    with gr.Blocks(title="Chat with RKLLM") as chatRKLLM:
-        gr.Markdown("<div align='center'><font size='70'> Chat with RKLLM </font></div>")
-        gr.Markdown("### Enter your question in the inputTextBox and press the Enter key to chat with the RKLLM model.")
-        # Create a Chatbot component to display conversation history
-        rkllmServer = gr.Chatbot(height=600)
-        # Create a Textbox component for user message input
-        msg = gr.Textbox(placeholder="Please input your question here...", label="inputTextBox")
-        # Create a Button component to clear the chat history.
-        clear = gr.Button("Clear")
-
-        # Submit the user's input message to the get_user_input function and immediately update the chat history.
-        # Then call the get_RKLLM_output function to further update the chat history.
-        # The queue=False parameter ensures that these updates are not queued, but executed immediately.
-        msg.submit(get_user_input, [msg, rkllmServer], [msg, rkllmServer], queue=False).then(get_RKLLM_output, rkllmServer, rkllmServer)
-        # When the clear button is clicked, perform a no-operation (lambda: None) and immediately clear the chat history.
-        clear.click(lambda: None, None, rkllmServer, queue=False)
-
-    # Enable the event queue system.
-    chatRKLLM.queue()
-    # Start the Gradio application.
-    chatRKLLM.launch()
-
-    print("====================")
-    print("RKLLM model inference completed, releasing RKLLM model resources...")
-    rkllm_model.release()
-    print("====================")
+    main()

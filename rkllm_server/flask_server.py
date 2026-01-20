@@ -158,7 +158,7 @@ def generate():
             rkllm_module.global_text = []
             rkllm_module.global_state = -1
             
-            if not stream:
+            if not stream or stream.lower() == 'false':
                 # Non-streaming response
                 return _generate_non_streaming(prompt, model, temperature, top_p, top_k)
             else:
