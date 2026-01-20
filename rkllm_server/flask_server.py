@@ -24,11 +24,14 @@ import threading
 import time
 import argparse
 import json
+from typing import Optional
 from flask import Flask, request, jsonify, Response, stream_with_context
 from datetime import datetime
 import hashlib
 from rkllm import RKLLM
 import rkllm as rkllm_module
+from model_manager import ModelManager, ModelPuller, ModelResourceManager
+from model_api import ModelAPI
 
 app = Flask(__name__)
 
@@ -37,6 +40,9 @@ rkllm_model = None
 model_name = None
 target_platform = None
 lock = threading.Lock()
+model_manager: Optional[ModelManager] = None
+resource_manager: Optional[ModelResourceManager] = None
+model_api: Optional[ModelAPI] = None
 
 # Model state management - use the same global_text from rkllm module
 # so the callback can populate it correctly
@@ -537,6 +543,113 @@ def health():
     return jsonify({'status': 'ok', 'model': model_name}), 200
 
 
+# ==================== MODEL MANAGEMENT ENDPOINTS ====================
+
+@app.route('/api/models', methods=['GET'])
+def list_available_models():
+    """List all available models"""
+    if not model_api:
+        return jsonify({'error': 'Model manager not initialized'}), 500
+    
+    return jsonify(model_api.list_models()), 200
+
+
+@app.route('/api/models/<model_name>', methods=['GET'])
+def get_model_info(model_name: str):
+    """Get information about a specific model"""
+    if not model_api:
+        return jsonify({'error': 'Model manager not initialized'}), 500
+    
+    return jsonify(model_api.get_model_info(model_name)), 200
+
+
+@app.route('/api/models/switch/<model_name>', methods=['POST'])
+def switch_model(model_name: str):
+    """Switch to a different model"""
+    global rkllm_model
+    
+    if not model_manager or not model_api:
+        return jsonify({'error': 'Model manager not initialized'}), 500
+    
+    try:
+        model_path = model_manager.get_model_path(model_name)
+        if not model_path:
+            return jsonify({'error': f'Model not found: {model_name}'}), 404
+        
+        with lock:
+            # Cleanup old model
+            old_model = rkllm_model
+            
+            # Load new model
+            rkllm_model = RKLLM(model_path)
+            
+            # Cleanup old model resources
+            if old_model:
+                try:
+                    if hasattr(old_model, 'release'):
+                        old_model.release()
+                    if hasattr(old_model, 'destroy'):
+                        old_model.destroy()
+                except:
+                    pass
+            
+            # Update model manager
+            model_manager.set_current_model(model_name)
+        
+        return jsonify(model_api.switch_model(model_name)), 200
+    
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/models/pull', methods=['POST'])
+def pull_model():
+    """Pull a model from HuggingFace"""
+    if not model_api:
+        return jsonify({'error': 'Model manager not initialized'}), 500
+    
+    data = request.json or {}
+    hf_url = data.get('hf_url')
+    model_name = data.get('model_name')
+    system_prompt = data.get('system_prompt', 'You are a helpful assistant.')
+    metadata = data.get('metadata', {})
+    
+    if not hf_url:
+        return jsonify({'error': 'hf_url is required'}), 400
+    
+    result = model_api.pull_model(hf_url, model_name, system_prompt, metadata)
+    
+    return jsonify(result), 200 if result.get('success') else 400
+
+
+@app.route('/api/models/current', methods=['GET'])
+def get_current_model():
+    """Get current model information"""
+    if not model_api:
+        return jsonify({'error': 'Model manager not initialized'}), 500
+    
+    return jsonify(model_api.get_current_model()), 200
+
+
+@app.route('/api/models/<model_name>/modelfile', methods=['GET'])
+def get_modelfile(model_name: str):
+    """Get modelfile for a model"""
+    if not model_api:
+        return jsonify({'error': 'Model manager not initialized'}), 500
+    
+    return jsonify(model_api.get_modelfile(model_name)), 200
+
+
+@app.route('/api/models/<model_name>/modelfile', methods=['POST'])
+def set_modelfile(model_name: str):
+    """Create or update modelfile for a model"""
+    if not model_api:
+        return jsonify({'error': 'Model manager not initialized'}), 500
+    
+    data = request.json or {}
+    return jsonify(model_api.create_modelfile(model_name, data)), 200
+
+
 @app.route('/', methods=['GET'])
 def root():
     """Root endpoint with server information."""
@@ -552,6 +665,9 @@ def root():
             'show': '/api/show (POST)',
             'embeddings': '/api/embeddings (POST)',
             'health': '/health (GET)',
+            'models': '/api/models (GET)',
+            'switch_model': '/api/models/switch/<name> (POST)',
+            'pull_model': '/api/models/pull (POST)',
             'tools/set': '/api/tools/set (POST)',
             'tools/call': '/api/tools/call (POST)'
         }
@@ -866,16 +982,24 @@ def setup_signal_handlers():
 
 def main():
     """Main entry point."""
-    global rkllm_model, model_name, target_platform
+    global rkllm_model, model_name, target_platform, model_manager, resource_manager, model_api
     
     parser = argparse.ArgumentParser(
-        description='Ollama-compatible RKLLM Flask server'
+        description='Ollama-compatible RKLLM Flask server with Model Management'
+    )
+    
+    # Model folder or single model path
+    parser.add_argument(
+        '--model_folder',
+        type=str,
+        default=None,
+        help='Path to folder containing models (recommended)'
     )
     parser.add_argument(
         '--rkllm_model_path',
         type=str,
-        required=True,
-        help='Absolute path of the converted RKLLM model on the Linux board'
+        default=None,
+        help='Absolute path of the converted RKLLM model (deprecated, use --model_folder)'
     )
     parser.add_argument(
         '--target_platform',
@@ -916,23 +1040,10 @@ def main():
     
     args = parser.parse_args()
     
-    # Validate arguments
-    if not os.path.exists(args.rkllm_model_path):
-        print("Error: Please provide the correct rkllm model path.")
-        print(f"Path not found: {args.rkllm_model_path}")
-        sys.exit(1)
-    
+    # Validate platform
     if args.target_platform not in ["rk3588", "rk3576", "rv1126b", "rk3562"]:
         print(f"Error: Invalid target platform: {args.target_platform}")
         print("Supported platforms: rk3588, rk3576, rv1126b, rk3562")
-        sys.exit(1)
-    
-    if args.lora_model_path and not os.path.exists(args.lora_model_path):
-        print("Error: Lora model path not found.")
-        sys.exit(1)
-    
-    if args.prompt_cache_path and not os.path.exists(args.prompt_cache_path):
-        print("Error: Prompt cache path not found.")
         sys.exit(1)
     
     # Set resource limits
@@ -948,33 +1059,84 @@ def main():
                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception as e:
         print(f"Note: Could not fix frequency scaling (requires sudo): {e}")
-        print("The server will run with default frequency settings.")
     
-    # Set global variables
     target_platform = args.target_platform
-    model_name = args.model_name or os.path.basename(args.rkllm_model_path)
     
-    # Initialize RKLLM model
     print("=" * 50)
-    print("Initializing RKLLM model...")
-    print(f"Model path: {args.rkllm_model_path}")
-    print(f"Target platform: {target_platform}")
-    print(f"Model name: {model_name}")
+    print("🚀 RKLLM Flask Server Starting")
     print("=" * 50)
     
-    try:
-        rkllm_model = RKLLM(
-            args.rkllm_model_path,
-            args.lora_model_path,
-            args.prompt_cache_path,
-            args.target_platform
-        )
-    except Exception as e:
-        print(f"Error: Failed to initialize RKLLM model: {e}")
+    # Initialize model manager if folder provided
+    if args.model_folder:
+        print(f"📁 Using model folder: {args.model_folder}")
+        if not os.path.exists(args.model_folder):
+            print(f"❌ Model folder not found: {args.model_folder}")
+            sys.exit(1)
+        
+        try:
+            model_manager = ModelManager(args.model_folder, args.target_platform)
+            resource_manager = ModelResourceManager()
+            model_api = ModelAPI(args.model_folder, args.target_platform)
+            
+            # Discover and load first available model
+            models = model_manager.discover_models()
+            if not models:
+                print("❌ No models found in model folder")
+                sys.exit(1)
+            
+            first_model = list(models.keys())[0]
+            first_model_path = models[first_model]
+            model_name = first_model
+            
+            print(f"📦 Loading model: {first_model}")
+            rkllm_model = RKLLM(first_model_path, args.lora_model_path, 
+                               args.prompt_cache_path, args.target_platform)
+            model_manager.set_current_model(first_model)
+            
+        except Exception as e:
+            print(f"❌ Error initializing model manager: {e}")
+            import traceback
+            traceback.print_exc()
+            sys.exit(1)
+    
+    elif args.rkllm_model_path:
+        print(f"⚠️  Using deprecated single model path. Consider using --model_folder")
+        
+        # Validate arguments
+        if not os.path.exists(args.rkllm_model_path):
+            print("Error: Please provide the correct rkllm model path.")
+            print(f"Path not found: {args.rkllm_model_path}")
+            sys.exit(1)
+        
+        if args.lora_model_path and not os.path.exists(args.lora_model_path):
+            print("Error: Lora model path not found.")
+            sys.exit(1)
+        
+        if args.prompt_cache_path and not os.path.exists(args.prompt_cache_path):
+            print("Error: Prompt cache path not found.")
+            sys.exit(1)
+        
+        model_name = args.model_name or os.path.basename(args.rkllm_model_path)
+        
+        print(f"Model path: {args.rkllm_model_path}")
+        print(f"Model name: {model_name}")
+        
+        try:
+            rkllm_model = RKLLM(
+                args.rkllm_model_path,
+                args.lora_model_path,
+                args.prompt_cache_path,
+                args.target_platform
+            )
+        except Exception as e:
+            print(f"❌ Error: Failed to initialize RKLLM model: {e}")
+            sys.exit(1)
+    else:
+        print("❌ Either --model_folder or --rkllm_model_path must be provided")
         sys.exit(1)
     
     print("=" * 50)
-    print("RKLLM model initialized successfully!")
+    print("✅ RKLLM model initialized successfully!")
     print("=" * 50)
     
     # Setup signal handlers for graceful shutdown
@@ -988,6 +1150,9 @@ def main():
     print(f"  - Chat: POST /api/chat")
     print(f"  - Tags: GET /api/tags")
     print(f"  - Show: POST /api/show")
+    print(f"  - Models: GET /api/models")
+    print(f"  - Switch Model: POST /api/models/switch/<name>")
+    print(f"  - Pull Model: POST /api/models/pull")
     print(f"  - Health: GET /health")
     print(f"  - Root: GET /")
     print("\nPress Ctrl+C to stop the server\n")
@@ -1003,9 +1168,10 @@ def main():
         print("\nShutting down...")
         if rkllm_model:
             print("Releasing RKLLM model resources...")
-            rkllm_model.release()
-        print("Server stopped.")
-
+            try:
+                rkllm_model.release()
+            except:
+                pass
 
 if __name__ == "__main__":
     main()
