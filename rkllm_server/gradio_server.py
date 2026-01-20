@@ -29,8 +29,8 @@ import rkllm as rkllm_module
 from model_manager import ModelManager, ModelPuller, ModelResourceManager
 from model_api import ModelAPI
 from chat_database import ChatDatabase, init_chat_database, get_chat_database
-from web_search import get_web_searcher, search_web, get_search_context
-from thinking_engine import get_thinking_engine, inject_thinking, parse_thinking_response, format_thinking_display
+from web_search import get_web_searcher, search_web, get_search_context, QueryOptimizer, ContentExtractor
+from thinking_engine import get_thinking_engine, inject_thinking, parse_thinking_response, format_thinking_display, get_loop_thinking_engine
 
 # Global variables
 rkllm_model = None
@@ -882,7 +882,7 @@ def create_gradio_interface():
             return formatted
         
         def respond(message: str, chat_history, use_streaming: bool = True, use_context: bool = True, use_search: bool = False, use_thinking: bool = False):
-            """Enhanced response handler with context, web search, and thinking modes."""
+            """Enhanced response handler with context, web search, thinking modes, and loop-based gathering."""
             if not message.strip():
                 if use_streaming:
                     yield chat_history
@@ -907,21 +907,61 @@ def create_gradio_interface():
             # Prepare message with web search and thinking
             augmented_message = message
             search_results = []
+            loop_thinking_results = None
             
-            # Perform web search if enabled
-            print(use_search)
-            if use_search:
+            # Enhanced Web Search with Loop Thinking
+            if use_search or use_thinking:
                 try:
-                    search_results = search_web(message, max_results=3)
-                    if search_results:
-                        search_context = get_search_context(message, max_results=3)
-                        augmented_message = search_context + augmented_message
-                        print(f"🔍 Web search found {len(search_results)} results")
+                    # Step 1: Optimize search query
+                    optimized_query = QueryOptimizer.optimize_query(message)
+                    print(f"🔍 Original: '{message}'")
+                    print(f"🔍 Optimized: '{optimized_query}'")
+                    
+                    # Step 2: Perform loop-based gathering if thinking enabled
+                    if use_thinking:
+                        print(f"💭 Starting loop-based gathering...")
+                        loop_engine = get_loop_thinking_engine()
+                        
+                        # Define search function for loop
+                        def loop_search(query: str, max_results: int = 2):
+                            results = search_web(query, max_results=max_results)
+                            # Enhance with content extraction
+                            return ContentExtractor.extract_from_results(results)
+                        
+                        loop_thinking_results = loop_engine.gather_information_loop(
+                            query=optimized_query,
+                            search_func=loop_search
+                        )
+                        
+                        # Use gathered info as augmented message
+                        if loop_thinking_results['gathered_info']:
+                            search_context = f"📚 **Gathered Information** ({loop_thinking_results['iterations']} iterations):\n"
+                            search_context += loop_thinking_results['gathered_info']
+                            augmented_message = search_context + "\n\n" + message
+                            search_results = []  # Results embedded in augmented message
+                            
+                            print(f"✅ Gathered info in {loop_thinking_results['iterations']} iterations")
+                    
+                    # Step 3: Regular search if not using loop thinking
+                    elif use_search:
+                        search_results = search_web(optimized_query, max_results=3)
+                        if search_results:
+                            # Enhance results with content extraction
+                            search_results = ContentExtractor.extract_from_results(search_results)
+                            search_context = f"🔍 **Web Search Results** ({len(search_results)} found):\n"
+                            for i, result in enumerate(search_results, 1):
+                                content = result.get('full_content') or result.get('snippet', '')
+                                search_context += f"\n{i}. [{result.get('title', 'Source')}]({result.get('url', '#')})\n   {content[:200]}..."
+                            augmented_message = search_context + "\n\n" + message
+                            print(f"🔍 Web search found {len(search_results)} results with content")
+                
                 except Exception as e:
-                    print(f"⚠️  Web search error: {str(e)}")
+                    print(f"⚠️  Search/thinking error: {str(e)}")
+                    import traceback
+                    traceback.print_exc()
             
-            # Inject thinking prompt if enabled
-            if use_thinking:
+            # Inject thinking prompt if enabled (and not already using loop thinking)
+            if use_thinking and not loop_thinking_results:
                 try:
                     augmented_message = inject_thinking(augmented_message, pattern="chain_of_thought")
                     print(f"💭 Thinking mode enabled")
@@ -939,12 +979,12 @@ def create_gradio_interface():
                         history=session_history if use_context else None
                     ):
                         response_text = partial_response
-                        # Format response with search results and thinking display
-                        formatted_response = format_response_with_search_and_thinking(
-                            response_text,
-                            search_results if search_results else None,
-                            use_thinking
-                        )
+                        # Format response with thinking steps if available
+                        formatted_response = response_text
+                        if loop_thinking_results:
+                            thinking_steps = "\n".join([f"  • {s}" for s in loop_thinking_results['thinking_steps']])
+                            formatted_response = f"**🔄 Gathering Steps:**\n{thinking_steps}\n\n**Response:**\n{response_text}"
+                        
                         updated_history = chat_history[:-1] + [{
                             "role": "assistant",
                             "content": formatted_response
@@ -961,12 +1001,12 @@ def create_gradio_interface():
                         history=session_history if use_context else None,
                         stream=False
                     )
-                    # Format response with search results and thinking display
-                    formatted_response = format_response_with_search_and_thinking(
-                        response,
-                        search_results if search_results else None,
-                        use_thinking
-                    )
+                    # Format response with thinking steps if available
+                    formatted_response = response
+                    if loop_thinking_results:
+                        thinking_steps = "\n".join([f"  • {s}" for s in loop_thinking_results['thinking_steps']])
+                        formatted_response = f"**🔄 Gathering Steps:**\n{thinking_steps}\n\n**Response:**\n{response}"
+                    
                     chat_history = chat_history + [{
                         "role": "assistant",
                         "content": formatted_response

@@ -11,15 +11,24 @@ Features:
 - Timeout protection
 - Result parsing and formatting
 - Rate limiting per domain
+- Content extraction from URLs
+- Search query optimization
 """
 
 import time
 import hashlib
+import requests
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Tuple
 from functools import lru_cache
 from ddgs import DDGS
 import logging
+
+try:
+    from bs4 import BeautifulSoup
+    HAS_BEAUTIFULSOUP = True
+except ImportError:
+    HAS_BEAUTIFULSOUP = False
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -299,3 +308,123 @@ def get_search_context(
     searcher = get_web_searcher()
     results = searcher.search(query, force_refresh, max_results)
     return searcher.format_search_context(results, query)
+
+
+class ContentExtractor:
+    """Extract and summarize content from URLs."""
+    
+    REQUEST_TIMEOUT = 10
+    MAX_CONTENT_LENGTH = 2000  # Max characters to extract
+    
+    @staticmethod
+    def fetch_content(url: str) -> Optional[str]:
+        """Fetch and extract text content from URL."""
+        try:
+            logger.info(f"📄 Fetching content from: {url}")
+            
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+            
+            response = requests.get(url, headers=headers, timeout=ContentExtractor.REQUEST_TIMEOUT)
+            response.raise_for_status()
+            
+            # Try BeautifulSoup if available
+            if HAS_BEAUTIFULSOUP:
+                soup = BeautifulSoup(response.content, 'html.parser')
+                # Remove script and style elements
+                for script in soup(["script", "style", "meta", "link"]):
+                    script.decompose()
+                # Get text
+                text = soup.get_text(separator=' ', strip=True)
+            else:
+                # Fallback: simple text extraction
+                text = response.text
+            
+            # Clean and limit
+            text = ' '.join(text.split())[:ContentExtractor.MAX_CONTENT_LENGTH]
+            
+            logger.info(f"✅ Extracted {len(text)} characters from {url}")
+            return text if text else None
+            
+        except Exception as e:
+            logger.warning(f"⚠️  Failed to fetch {url}: {str(e)}")
+            return None
+    
+    @staticmethod
+    def extract_from_results(results: List[Dict]) -> List[Dict]:
+        """Extract content from search results."""
+        enhanced = []
+        
+        for result in results:
+            url = result.get('url', '')
+            content = ContentExtractor.fetch_content(url)
+            
+            enhanced.append({
+                **result,
+                'full_content': content or result.get('snippet', '')
+            })
+        
+        return enhanced
+
+
+class QueryOptimizer:
+    """Optimize search queries for better results."""
+    
+    # Keywords that make queries too broad
+    BROAD_KEYWORDS = ['what', 'is', 'the', 'a', 'an', 'tell', 'me', 'about', 'how', 'why']
+    
+    @staticmethod
+    def optimize_query(user_query: str, context: str = "") -> str:
+        """
+        Optimize query for better search results.
+        
+        Args:
+            user_query: Original user query
+            context: Additional context for optimization
+        
+        Returns:
+            Optimized search query
+        """
+        
+        # Remove common filler words
+        words = user_query.lower().split()
+        filtered = [w for w in words if w not in QueryOptimizer.BROAD_KEYWORDS and len(w) > 2]
+        
+        # If too much was filtered, keep original
+        if len(filtered) < 2:
+            filtered = words
+        
+        # Create focused query
+        query = ' '.join(filtered[:10])  # Limit to 10 most important words
+        
+        # Add context if provided
+        if context:
+            query = f"{query} {context}".strip()
+        
+        logger.info(f"🔍 Optimized query: '{user_query}' → '{query}'")
+        return query
+    
+    @staticmethod
+    def extract_entities(query: str) -> Dict[str, List[str]]:
+        """
+        Extract entities from query for better search.
+        
+        Returns:
+            {
+                'locations': [...],
+                'keywords': [...],
+                'time_refs': [...]
+            }
+        """
+        
+        time_keywords = ['today', 'now', 'latest', 'recent', 'current', '2024', '2025']
+        location_keywords = ['in', 'at', 'near', 'around']
+        
+        words = query.lower().split()
+        
+        return {
+            'keywords': [w for w in words if w not in QueryOptimizer.BROAD_KEYWORDS],
+            'has_time_ref': any(t in query.lower() for t in time_keywords),
+            'has_location': any(l in query.lower() for l in location_keywords),
+        }

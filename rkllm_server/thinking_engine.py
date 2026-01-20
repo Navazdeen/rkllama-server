@@ -346,3 +346,243 @@ def parse_thinking_response(response: str) -> Dict:
 def format_thinking_display(thinking_text: str) -> str:
     """Convenience function to format thinking for UI."""
     return get_thinking_engine().format_thinking_for_display(thinking_text)
+
+
+class LoopThinkingEngine:
+    """
+    Loop-based thinking engine that iteratively gathers information.
+    
+    Process:
+    1. Analyze query and design steps
+    2. Execute search/reasoning step
+    3. Evaluate completeness
+    4. Loop until information complete
+    5. Generate final response
+    """
+    
+    ANALYSIS_PROMPT = """Analyze this query and design steps to gather information:
+
+Query: {query}
+
+Please provide:
+1. What information is needed?
+2. What search queries would help?
+3. How many steps until complete?
+
+Analysis:
+"""
+    
+    EVALUATION_PROMPT = """Evaluate if we have enough information:
+
+Query: {original_query}
+
+Information gathered so far:
+{gathered_info}
+
+Questions:
+1. Do we have enough information? (YES/NO)
+2. What additional information is needed?
+3. What should the next search query be?
+
+Evaluation:
+"""
+    
+    def __init__(self, max_iterations: int = 3, info_threshold: int = 500):
+        """
+        Initialize loop thinking engine.
+        
+        Args:
+            max_iterations: Maximum loop iterations
+            info_threshold: Minimum characters of info to consider complete
+        """
+        self.max_iterations = max_iterations
+        self.info_threshold = info_threshold
+        logger.info(f"🔄 LoopThinkingEngine initialized (max_iter: {max_iterations})")
+    
+    def design_search_steps(self, query: str) -> Dict:
+        """
+        Design steps to gather information for a query.
+        
+        Returns:
+            {
+                'steps': [...],
+                'search_queries': [...],
+                'estimated_iterations': int
+            }
+        """
+        
+        # Extract key aspects from query
+        keywords = query.lower().split()
+        
+        # Determine complexity
+        is_complex = len(keywords) > 5
+        is_current = any(t in query.lower() for t in ['latest', 'recent', 'current', 'today'])
+        
+        steps = []
+        queries = []
+        iterations = 1
+        
+        if is_current:
+            steps.append("Search for current information")
+            queries.append(f"latest {' '.join(keywords[:3])}")
+            iterations = 2
+        else:
+            steps.append("Search for general information")
+            queries.append(' '.join(keywords[:5]))
+        
+        if is_complex:
+            steps.append("Gather detailed context")
+            iterations += 1
+        
+        logger.info(f"📋 Designed {len(steps)} steps for query")
+        
+        return {
+            'steps': steps,
+            'search_queries': queries,
+            'estimated_iterations': min(iterations, self.max_iterations),
+            'is_complex': is_complex,
+            'is_current': is_current
+        }
+    
+    def evaluate_completeness(
+        self,
+        gathered_info: str,
+        original_query: str,
+        iteration: int
+    ) -> Dict:
+        """
+        Evaluate if gathered information is complete.
+        
+        Returns:
+            {
+                'is_complete': bool,
+                'confidence': float (0-1),
+                'next_query': str or None,
+                'reason': str
+            }
+        """
+        
+        info_length = len(gathered_info)
+        
+        # Simple heuristics
+        is_sufficient_length = info_length >= self.info_threshold
+        is_max_iterations = iteration >= self.max_iterations
+        has_details = any(word in gathered_info.lower() for word in ['because', 'due to', 'result', 'leading'])
+        
+        is_complete = (is_sufficient_length and has_details) or is_max_iterations
+        confidence = min(info_length / (self.info_threshold * 2), 1.0)
+        
+        reason = ""
+        next_query = None
+        
+        if is_complete:
+            reason = "Sufficient information gathered" if not is_max_iterations else "Max iterations reached"
+        else:
+            reason = "Need more details"
+            # Suggest next search area
+            if 'how' in original_query.lower():
+                next_query = f"{original_query} explanation examples"
+            elif 'why' in original_query.lower():
+                next_query = f"{original_query} reasons causes"
+            else:
+                next_query = f"{original_query} detailed information"
+        
+        logger.info(f"📊 Completeness eval: complete={is_complete}, conf={confidence:.2f}")
+        
+        return {
+            'is_complete': is_complete,
+            'confidence': confidence,
+            'next_query': next_query,
+            'reason': reason,
+            'info_length': info_length
+        }
+    
+    def gather_information_loop(
+        self,
+        query: str,
+        search_func,  # Function to perform searches
+        info_extractor=None  # Optional function to extract info
+    ) -> Dict:
+        """
+        Loop-based information gathering.
+        
+        Returns:
+            {
+                'gathered_info': str,
+                'iterations': int,
+                'search_queries': List[str],
+                'completeness': Dict,
+                'thinking_steps': List[str]
+            }
+        """
+        
+        gathered_info = ""
+        search_queries = []
+        thinking_steps = []
+        
+        # Step 1: Design search steps
+        design = self.design_search_steps(query)
+        thinking_steps.append(f"Designed {design['estimated_iterations']} iterations")
+        
+        iteration = 0
+        
+        while iteration < self.max_iterations:
+            iteration += 1
+            logger.info(f"\n🔄 Iteration {iteration}/{self.max_iterations}")
+            
+            # Determine search query
+            if iteration == 1:
+                # Use first designed query
+                search_query = design['search_queries'][0] if design['search_queries'] else query
+            else:
+                # Evaluate and get next query
+                eval_result = self.evaluate_completeness(gathered_info, query, iteration - 1)
+                if eval_result['is_complete']:
+                    thinking_steps.append(f"Stopped at iteration {iteration}: {eval_result['reason']}")
+                    break
+                search_query = eval_result['next_query'] or query
+            
+            search_queries.append(search_query)
+            thinking_steps.append(f"Iteration {iteration}: Searching '{search_query}'")
+            
+            # Perform search
+            try:
+                results = search_func(search_query, max_results=2)
+                
+                # Extract information from results
+                for result in results:
+                    content = result.get('full_content') or result.get('snippet', '')
+                    if content:
+                        gathered_info += "\n" + content
+            
+            except Exception as e:
+                logger.warning(f"⚠️  Search failed at iteration {iteration}: {e}")
+                thinking_steps.append(f"Search error at iteration {iteration}")
+        
+        # Final evaluation
+        final_eval = self.evaluate_completeness(gathered_info, query, iteration)
+        thinking_steps.append(f"Final: {final_eval['reason']} (confidence: {final_eval['confidence']:.1%})")
+        
+        logger.info(f"✅ Information gathering complete in {iteration} iterations")
+        
+        return {
+            'gathered_info': gathered_info.strip(),
+            'iterations': iteration,
+            'search_queries': search_queries,
+            'completeness': final_eval,
+            'thinking_steps': thinking_steps
+        }
+
+
+# Global loop thinking instance
+_loop_thinking_engine: Optional[LoopThinkingEngine] = None
+
+
+def get_loop_thinking_engine() -> LoopThinkingEngine:
+    """Get or create global loop thinking engine instance."""
+    global _loop_thinking_engine
+    
+    if _loop_thinking_engine is None:
+        _loop_thinking_engine = LoopThinkingEngine(max_iterations=3, info_threshold=500)
+    
+    return _loop_thinking_engine
