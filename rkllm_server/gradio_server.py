@@ -778,6 +778,37 @@ def create_gradio_interface():
                 # Divider
                 gr.Markdown("---")
                 
+                # HuggingFace Model Pull
+                gr.Markdown("**📥 Pull from HF**")
+                
+                hf_url_input = gr.Textbox(
+                    label="HF Repo URL",
+                    placeholder="owner/repo or https://huggingface.co/owner/repo",
+                    lines=1,
+                    interactive=True
+                )
+                
+                with gr.Row():
+                    hf_model_name = gr.Textbox(
+                        label="Model Name",
+                        placeholder="Optional custom name",
+                        lines=1,
+                        scale=2,
+                        interactive=True
+                    )
+                    hf_pull_btn = gr.Button("🔽 Pull", scale=1, variant="primary", size="sm")
+                
+                hf_status = gr.Textbox(
+                    label="Status",
+                    value="Ready",
+                    interactive=False,
+                    lines=2,
+                    show_label=False
+                )
+                
+                # Divider
+                gr.Markdown("---")
+                
                 # Model information
                 gr.Markdown("**Model Info**")
                 model_info_btn = gr.Button("ℹ️ Show Details", scale=1)
@@ -1320,6 +1351,41 @@ def create_gradio_interface():
             on_switch_model,
             inputs=[model_selector],
             outputs=[status_text, model_info_display]
+        )
+        
+        # Event handler for HuggingFace model pull
+        def on_hf_pull(hf_url: str, custom_name: str):
+            """Handle HuggingFace model pull."""
+            if not hf_url or not hf_url.strip():
+                return "❌ Please enter a HuggingFace repository URL"
+            
+            try:
+                # Use custom name if provided, otherwise None to auto-generate
+                model_name_for_pull = custom_name if custom_name and custom_name.strip() else None
+                
+                print(f"📥 Starting HF pull: {hf_url}")
+                success, message = pull_model_from_hf(hf_url, model_name_for_pull)
+                
+                if success:
+                    # Refresh model selector
+                    available_models = []
+                    if model_manager:
+                        models = model_manager.get_available_models()
+                        available_models = list(models.keys()) if models else []
+                    
+                    return message
+                else:
+                    return message
+            except Exception as e:
+                return f"❌ Error: {str(e)}"
+        
+        hf_pull_btn.click(
+            on_hf_pull,
+            inputs=[hf_url_input, hf_model_name],
+            outputs=[hf_status]
+        ).then(
+            refresh_model_selector,
+            outputs=[model_selector]
         )
         
         # Event handler for actions

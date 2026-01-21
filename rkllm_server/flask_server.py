@@ -10,6 +10,8 @@ Key Features:
 - /api/chat: Chat completion endpoint
 - /api/tags: List available models
 - /api/show: Show model details
+- /api/models/switch/<name>: Switch to a different model
+- /api/models/pull: Pull a model from a remote source
 - /api/embeddings: Get embeddings (if supported by model)
 - Streaming support (Server-Sent Events)
 - Multi-threaded request handling

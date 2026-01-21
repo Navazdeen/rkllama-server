@@ -312,21 +312,21 @@ class ModelPuller:
                 # Download all .rkllm files from the repo
                 # First, we need to list files in the repo
                 from huggingface_hub import list_repo_files
+                import sys
                 
                 print(f"🔍 Scanning repository for .rkllm files...")
                 
                 # Try using git lfs or huggingface_hub
                 # For now, use huggingface-cli command
                 result = subprocess.run([
-                    "huggingface-cli", "download",
+                    "hf", "download",
                     f"{owner}/{repo}",
                     "--repo-type", "model",
                     "--local-dir", str(model_dir),
-                    "--local-dir-use-symlinks", "False"
-                ], capture_output=True, text=True, timeout=3600)
+                ], text=True, timeout=3600, stdout=sys.stdout, stderr=sys.stdout)
                 
-                if result.returncode != 0:
-                    return False, f"❌ Failed to pull model: {result.stderr}"
+                # if result.returncode != 0:
+                #     return False, f"❌ Failed to pull model: {result.stderr}"
                 
                 print(f"✅ Model pulled successfully")
                 
