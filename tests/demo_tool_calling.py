@@ -5,9 +5,10 @@ RKLLM Tool Calling - Complete End-to-End Demo
 This demonstrates a realistic scenario where the model uses tools to answer user queries.
 """
 
-import requests
 import json
 import sys
+
+import requests
 
 BASE_URL = "http://localhost:8080"
 

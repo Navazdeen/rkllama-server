@@ -9,11 +9,14 @@ Verifies:
 5. Search functionality works with updated titles
 """
 import sys
+
 sys.path.insert(0, '/home/navazdeen/rkllama-server')
 
-from rkllm_server.chat_database import ChatDatabase
-import uuid
 import os
+import uuid
+
+from rkllm_server.db.chat_database import ChatDatabase
+
 
 def run_comprehensive_test():
     """Run comprehensive auto-titling tests"""
@@ -32,7 +35,7 @@ def run_comprehensive_test():
     # TEST 1: Title generation from model
     print("\n📝 TEST 1: Title Generation from Model")
     print("-" * 70)
-    model_title = db._generate_title_from_model("Qwen2.5-3B-Instruct")
+    model_title = db._generateTitleFromModel("Qwen2.5-3B-Instruct")
     print(f"  Model: Qwen2.5-3B-Instruct")
     print(f"  Generated Title: '{model_title}'")
     assert "Chat with" in model_title, "Model title should contain 'Chat with'"
@@ -50,7 +53,7 @@ def run_comprehensive_test():
     ]
     
     for message, expected in test_cases:
-        generated = db.generate_title_from_message(message, "Qwen2.5")
+        generated = db.generateTitleFromMessage(message, "Qwen2.5")
         print(f"  Input: '{message[:40]}'")
         print(f"  Output: '{generated}'")
         assert generated == expected, f"Expected '{expected}', got '{generated}'"
@@ -60,8 +63,8 @@ def run_comprehensive_test():
     print("\n📝 TEST 3: Database Chat Creation and Title Update")
     print("-" * 70)
     chat_id = str(uuid.uuid4())
-    db.create_chat(chat_id, "Qwen2.5-3B-Instruct", "Gradio")
-    chat_info = db.get_chat(chat_id)
+    db.createChat(chat_id, "Qwen2.5-3B-Instruct", "Gradio")
+    chat_info = db.getChat(chat_id)
     
     print(f"  Created chat: {chat_id}")
     print(f"  Initial title: '{chat_info['title']}'")
@@ -72,11 +75,11 @@ def run_comprehensive_test():
     print("\n📝 TEST 4: Auto-Title Update on First Message")
     print("-" * 70)
     first_message = "How to learn Python programming efficiently"
-    db.add_message(chat_id, "user", first_message)
+    db.addMessage(chat_id, "user", first_message)
     
     # Simulate the logic from gradio_server
-    new_title = db.generate_title_from_message(first_message, "Qwen2.5")
-    current_auto_title = db._generate_title_from_model("Qwen2.5")
+    new_title = db.generateTitleFromMessage(first_message, "Qwen2.5")
+    current_auto_title = db._generateTitleFromModel("Qwen2.5")
     
     print(f"  First message: '{first_message}'")
     print(f"  Generated title: '{new_title}'")
@@ -84,11 +87,11 @@ def run_comprehensive_test():
     print(f"  Titles differ: {new_title != current_auto_title}")
     
     if new_title and new_title != current_auto_title:
-        db.update_chat_title(chat_id, new_title)
+        db.updateChatTitle(chat_id, new_title)
         print(f"  Title updated in database")
     
     # Verify update
-    updated_info = db.get_chat(chat_id)
+    updated_info = db.getChat(chat_id)
     print(f"  Current title in DB: '{updated_info['title']}'")
     assert updated_info['title'] == new_title, "Title should be updated to message title"
     print("  ✅ PASS")
@@ -105,14 +108,14 @@ def run_comprehensive_test():
     
     for msg in messages:
         cid = str(uuid.uuid4())
-        db.create_chat(cid, "Qwen2.5-3B-Instruct", "Gradio")
-        db.add_message(cid, "user", msg)
+        db.createChat(cid, "Qwen2.5-3B-Instruct", "Gradio")
+        db.addMessage(cid, "user", msg)
         
-        title = db.generate_title_from_message(msg, "Qwen2.5")
-        current_auto = db._generate_title_from_model("Qwen2.5")
+        title = db.generateTitleFromMessage(msg, "Qwen2.5")
+        current_auto = db._generateTitleFromModel("Qwen2.5")
         
         if title and title != current_auto:
-            db.update_chat_title(cid, title)
+            db.updateChatTitle(cid, title)
         
         chats.append((cid, title))
         print(f"  Chat: {title}")
@@ -132,7 +135,7 @@ def run_comprehensive_test():
     ]
     
     for term, expected_count in search_terms:
-        results = db.search_chats(term)
+        results = db.searchChats(term)
         print(f"  Search '{term}': Found {len(results)} results")
         if results:
             for r in results:
@@ -144,7 +147,7 @@ def run_comprehensive_test():
     # TEST 7: Chat list retrieval
     print("\n📝 TEST 7: Chat List Retrieval")
     print("-" * 70)
-    all_chats = db.get_all_chats()
+    all_chats = db.getAllChats()
     print(f"  Total chats in database: {len(all_chats)}")
     
     for i, chat in enumerate(all_chats):
@@ -164,12 +167,12 @@ def run_comprehensive_test():
     first_chat_id = chats[0][0]
     
     # Add more messages
-    db.add_message(first_chat_id, "assistant", "Here's what I think about clean code...")
-    db.add_message(first_chat_id, "user", "Can you give me some examples?")
-    db.add_message(first_chat_id, "assistant", "Sure! Here are some examples...")
+    db.addMessage(first_chat_id, "assistant", "Here's what I think about clean code...")
+    db.addMessage(first_chat_id, "user", "Can you give me some examples?")
+    db.addMessage(first_chat_id, "assistant", "Sure! Here are some examples...")
     
     # Retrieve messages
-    messages = db.get_chat_messages(first_chat_id)
+    messages = db.getChatMessages(first_chat_id)
     print(f"  Chat ID: {first_chat_id}")
     print(f"  Total messages: {len(messages)}")
     

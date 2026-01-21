@@ -15,14 +15,13 @@ Features:
 - Search query optimization
 """
 
-import time
 import hashlib
-import requests
-from datetime import datetime, timedelta
-from typing import List, Dict, Optional, Tuple
-from functools import lru_cache
-from ddgs import DDGS
 import logging
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional
+
+import requests
+from ddgs import DDGS
 
 try:
     from bs4 import BeautifulSoup

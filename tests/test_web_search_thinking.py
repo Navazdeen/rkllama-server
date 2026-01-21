@@ -6,8 +6,8 @@ Test Coverage:
 - Thinking engine: prompt injection, response parsing, step extraction
 """
 
-import sys
 import os
+import sys
 import time
 import unittest
 from datetime import datetime, timedelta
@@ -15,8 +15,8 @@ from datetime import datetime, timedelta
 # Add rkllm_server to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'rkllm_server'))
 
-from web_search import WebSearcher, SearchCache, get_web_searcher, search_web
 from thinking_engine import ThinkingEngine, get_thinking_engine, parse_thinking_response
+from web_search import SearchCache, WebSearcher, get_web_searcher, search_web
 
 
 class TestSearchCache(unittest.TestCase):

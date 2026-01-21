@@ -5,8 +5,9 @@ Tool Calling API Test - Comprehensive Testing
 This script demonstrates how to use the tool calling API.
 """
 
-import requests
 import json
+
+import requests
 
 BASE_URL = "http://localhost:8080"
 

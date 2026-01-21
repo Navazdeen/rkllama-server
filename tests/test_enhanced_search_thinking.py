@@ -10,19 +10,18 @@ Tests cover:
 5. Weather query validation - Tiruvannamalai weather test
 """
 
-import sys
-import os
-import unittest
 import logging
-from typing import Dict, List
+import os
+import sys
+import unittest
 from datetime import datetime
+from typing import Dict, List
 
 # Add parent directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'rkllm_server'))
 
-from web_search import QueryOptimizer, ContentExtractor, search_web
 from thinking_engine import LoopThinkingEngine, get_loop_thinking_engine
-
+from web_search import ContentExtractor, QueryOptimizer, search_web
 
 # Configure logging
 logging.basicConfig(

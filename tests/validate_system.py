@@ -2,13 +2,16 @@
 """
 Validate Gradio Server - Auto-Titling and History Preservation
 """
-import sys
 import os
+import sys
 import uuid
+
 sys.path.insert(0, '/home/navazdeen/rkllama-server/rkllm_server')
 
-from chat_database import ChatDatabase, DB_PATH
 import json
+
+from chat_database import DB_PATH, ChatDatabase
+
 
 def validate_system():
     """Validate auto-titling and history preservation system"""

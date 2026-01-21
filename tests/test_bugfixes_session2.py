@@ -8,9 +8,9 @@ Tests for:
 3. Chat processing without interruption
 """
 
-import unittest
 import threading
 import time
+import unittest
 from typing import Dict, List
 
 

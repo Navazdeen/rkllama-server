@@ -11,14 +11,14 @@ Tests cover:
 6. UI interaction robustness
 """
 
-import sys
-import os
-import unittest
 import logging
-from typing import Dict, List
-from unittest.mock import Mock, patch, MagicMock
+import os
+import sys
 import threading
 import time
+import unittest
+from typing import Dict, List
+from unittest.mock import MagicMock, Mock, patch
 
 # Add parent directories to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))

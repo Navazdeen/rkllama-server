@@ -10,11 +10,12 @@ This script validates:
 5. Tool calling functionality
 """
 
+import json
 import subprocess
 import sys
-import json
-import requests
 from pathlib import Path
+
+import requests
 
 # Colors for output
 GREEN = '\033[92m'

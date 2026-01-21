@@ -8,8 +8,8 @@ Tests:
 4. Both features together
 """
 
-import sys
 import os
+import sys
 
 # Add rkllm_server to path FIRST
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'rkllm_server'))
@@ -21,8 +21,13 @@ try:
 except ImportError:
     print("⚠️  duckduckgo_search not in sys.path, trying system python...")
 
+from thinking_engine import (
+    format_thinking_display,
+    get_thinking_engine,
+    inject_thinking,
+    parse_thinking_response,
+)
 from web_search import get_web_searcher
-from thinking_engine import get_thinking_engine, inject_thinking, parse_thinking_response, format_thinking_display
 
 
 def test_web_search_integration():

@@ -12,12 +12,12 @@ This script validates:
 Run with: python validate_ui_enhancements.py
 """
 
-import sys
-import os
 import logging
-from typing import Dict, List, Tuple
+import os
 import subprocess
+import sys
 import time
+from typing import Dict, List, Tuple
 
 # Configure logging
 logging.basicConfig(

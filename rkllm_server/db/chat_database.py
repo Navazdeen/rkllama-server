@@ -9,17 +9,15 @@ Features:
 - Clean up old chats
 """
 
-import sqlite3
-import json
 import os
-from datetime import datetime
-from typing import List, Dict, Optional, Tuple
+import sqlite3
 import threading
+from datetime import datetime
+from typing import Dict, List, Optional
 
 # Get the directory where this file is located (rkllm_server folder)
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_FOLDER = os.path.join(CURRENT_DIR, "db")
-DB_PATH = os.path.join(DB_FOLDER, "chat_history.db")
+DB_PATH = os.path.join(CURRENT_DIR, "chat_history.db")
 DB_DIR = os.path.dirname(DB_PATH)
 
 # Ensure database directory exists
@@ -36,18 +34,18 @@ class ChatDatabase:
     def __init__(self, db_path: str = DB_PATH):
         """Initialize database connection."""
         self.db_path = db_path
-        self.init_database()
+        self.initDatabase()
     
-    def get_connection(self):
+    def getConnection(self):
         """Get database connection."""
         conn = sqlite3.connect(self.db_path, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         return conn
     
-    def init_database(self):
+    def initDatabase(self):
         """Create database schema if not exists."""
         with db_lock:
-            conn = self.get_connection()
+            conn = self.getConnection()
             cursor = conn.cursor()
             
             # Create chats table
@@ -78,15 +76,15 @@ class ChatDatabase:
             conn.commit()
             conn.close()
     
-    def create_chat(self, chat_id: str, model: str, platform: str = "rk3588") -> bool:
+    def createChat(self, chat_id: str, model: str, platform: str = "rk3588") -> bool:
         """Create new chat session in database."""
         with db_lock:
             try:
-                conn = self.get_connection()
+                conn = self.getConnection()
                 cursor = conn.cursor()
                 
                 # Generate initial title from model name
-                title = self._generate_title_from_model(model)
+                title = self._generateTitleFromModel(model)
                 now = datetime.now().isoformat()
                 
                 cursor.execute('''
@@ -101,11 +99,11 @@ class ChatDatabase:
                 print(f"❌ Error creating chat: {str(e)}")
                 return False
     
-    def add_message(self, chat_id: str, role: str, content: str) -> bool:
+    def addMessage(self, chat_id: str, role: str, content: str) -> bool:
         """Add message to chat."""
         with db_lock:
             try:
-                conn = self.get_connection()
+                conn = self.getConnection()
                 cursor = conn.cursor()
                 now = datetime.now().isoformat()
                 
@@ -128,11 +126,11 @@ class ChatDatabase:
                 print(f"❌ Error adding message: {str(e)}")
                 return False
     
-    def update_chat_title(self, chat_id: str, new_title: str) -> bool:
+    def updateChatTitle(self, chat_id: str, new_title: str) -> bool:
         """Update chat title (called when first user message arrives)."""
         with db_lock:
             try:
-                conn = self.get_connection()
+                conn = self.getConnection()
                 cursor = conn.cursor()
                 now = datetime.now().isoformat()
                 
@@ -149,11 +147,11 @@ class ChatDatabase:
                 print(f"❌ Error updating title: {str(e)}")
                 return False
     
-    def get_chat(self, chat_id: str) -> Optional[Dict]:
+    def getChat(self, chat_id: str) -> Optional[Dict]:
         """Get chat info by ID."""
         with db_lock:
             try:
-                conn = self.get_connection()
+                conn = self.getConnection()
                 cursor = conn.cursor()
                 
                 cursor.execute('SELECT * FROM chats WHERE id = ?', (chat_id,))
@@ -167,11 +165,11 @@ class ChatDatabase:
                 print(f"❌ Error getting chat: {str(e)}")
                 return None
     
-    def get_chat_messages(self, chat_id: str) -> List[Dict]:
+    def getChatMessages(self, chat_id: str) -> List[Dict]:
         """Get all messages for a chat."""
         with db_lock:
             try:
-                conn = self.get_connection()
+                conn = self.getConnection()
                 cursor = conn.cursor()
                 
                 cursor.execute('''
@@ -188,11 +186,11 @@ class ChatDatabase:
                 print(f"❌ Error getting messages: {str(e)}")
                 return []
     
-    def get_all_chats(self) -> List[Dict]:
+    def getAllChats(self) -> List[Dict]:
         """Get all chats, ordered by updated_at descending."""
         with db_lock:
             try:
-                conn = self.get_connection()
+                conn = self.getConnection()
                 cursor = conn.cursor()
                 
                 cursor.execute('''
@@ -208,11 +206,11 @@ class ChatDatabase:
                 print(f"❌ Error getting all chats: {str(e)}")
                 return []
     
-    def search_chats(self, query: str) -> List[Dict]:
+    def searchChats(self, query: str) -> List[Dict]:
         """Search chats by title or model."""
         with db_lock:
             try:
-                conn = self.get_connection()
+                conn = self.getConnection()
                 cursor = conn.cursor()
                 
                 search_term = f"%{query}%"
@@ -230,11 +228,11 @@ class ChatDatabase:
                 print(f"❌ Error searching chats: {str(e)}")
                 return []
     
-    def delete_chat(self, chat_id: str) -> bool:
+    def deleteChat(self, chat_id: str) -> bool:
         """Delete chat and all its messages."""
         with db_lock:
             try:
-                conn = self.get_connection()
+                conn = self.getConnection()
                 cursor = conn.cursor()
                 
                 # Messages will be deleted due to CASCADE
@@ -247,11 +245,11 @@ class ChatDatabase:
                 print(f"❌ Error deleting chat: {str(e)}")
                 return False
     
-    def delete_all_chats(self) -> bool:
+    def deleteAllChats(self) -> bool:
         """Delete all chats."""
         with db_lock:
             try:
-                conn = self.get_connection()
+                conn = self.getConnection()
                 cursor = conn.cursor()
                 
                 cursor.execute('DELETE FROM messages')
@@ -264,11 +262,11 @@ class ChatDatabase:
                 print(f"❌ Error deleting all chats: {str(e)}")
                 return False
     
-    def chat_exists(self, chat_id: str) -> bool:
+    def chatExists(self, chat_id: str) -> bool:
         """Check if chat exists."""
         with db_lock:
             try:
-                conn = self.get_connection()
+                conn = self.getConnection()
                 cursor = conn.cursor()
                 
                 cursor.execute('SELECT 1 FROM chats WHERE id = ?', (chat_id,))
@@ -281,7 +279,7 @@ class ChatDatabase:
                 return False
     
     @staticmethod
-    def _generate_title_from_model(model: str) -> str:
+    def _generateTitleFromModel(model: str) -> str:
         """Generate chat title from model name."""
         # Remove file extensions and platform info
         title = model.split('.')[0]  # Remove .rkllm
@@ -290,7 +288,7 @@ class ChatDatabase:
         return f"Chat with {title.strip()}"
     
     @staticmethod
-    def generate_title_from_message(message: str, model: str) -> str:
+    def generateTitleFromMessage(message: str, model: str) -> str:
         """Generate appropriate title from first user message (simple extraction)."""
         try:
             # Take first 50 chars of message
@@ -307,12 +305,12 @@ class ChatDatabase:
             if title:
                 return f"{title}"
             else:
-                return ChatDatabase._generate_title_from_model(model)
-        except Exception as e:
-            return ChatDatabase._generate_title_from_model(model)
+                return ChatDatabase._generateTitleFromModel(model)
+        except Exception:
+            return ChatDatabase._generateTitleFromModel(model)
     
     @staticmethod
-    def extract_summary_from_model_response(response: str, max_length: int = 60) -> str:
+    def extractSummaryFromModelResponse(response: str, max_length: int = 60) -> str:
         """Extract and clean a model-generated summary for use as title."""
         try:
             if not response:
@@ -335,25 +333,25 @@ class ChatDatabase:
                 summary = summary[0].upper() + summary[1:]
             
             return summary
-        except Exception as e:
+        except Exception:
             return ""
 
 
 # Global database instance
-chat_db: Optional[ChatDatabase] = None
+chatDb: Optional[ChatDatabase] = None
 
 
-def init_chat_database() -> ChatDatabase:
+def initChatDatabase() -> ChatDatabase:
     """Initialize and return global database instance."""
-    global chat_db
-    if chat_db is None:
-        chat_db = ChatDatabase()
-    return chat_db
+    global chatDb
+    if chatDb is None:
+        chatDb = ChatDatabase()
+    return chatDb
 
 
-def get_chat_database() -> ChatDatabase:
+def getChatDatabase() -> ChatDatabase:
     """Get global database instance."""
-    global chat_db
-    if chat_db is None:
-        chat_db = ChatDatabase()
-    return chat_db
+    global chatDb
+    if chatDb is None:
+        chatDb = ChatDatabase()
+    return chatDb

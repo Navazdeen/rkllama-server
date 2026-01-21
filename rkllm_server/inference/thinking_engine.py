@@ -11,9 +11,9 @@ Features:
 - Reasoning trace extraction
 """
 
-import re
-from typing import Dict, Optional, List, Tuple
 import logging
+import re
+from typing import Dict, List, Optional, Tuple
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -26,42 +26,42 @@ class ThinkingEngine:
     # Prompt templates for different reasoning patterns
     CHAIN_OF_THOUGHT_TEMPLATE = """Let's think through this step-by-step:
 
-Question: {query}
+        Question: {query}
 
-Step 1: Identify the key information
-Step 2: Determine what we need to find
-Step 3: Work through the reasoning
-Step 4: Verify our conclusion
+        Step 1: Identify the key information
+        Step 2: Determine what we need to find
+        Step 3: Work through the reasoning
+        Step 4: Verify our conclusion
 
-Reasoning Process:
-"""
+        Reasoning Process:
+    """
     
     STRUCTURED_THINKING_TEMPLATE = """Please provide a structured response:
 
-Question: {query}
+        Question: {query}
 
-Think about:
-1. What are the relevant facts or assumptions?
-2. What is the core problem or question?
-3. What are possible approaches?
-4. What is the best solution?
-5. Why is this the best approach?
+        Think about:
+        1. What are the relevant facts or assumptions?
+        2. What is the core problem or question?
+        3. What are possible approaches?
+        4. What is the best solution?
+        5. Why is this the best approach?
 
-Analysis:
-"""
+        Analysis:
+    """
     
     DETAILED_EXPLANATION_TEMPLATE = """Explain this in detail with reasoning:
 
-Question: {query}
+        Question: {query}
 
-Please include:
-- Your initial understanding
-- Key considerations
-- Step-by-step explanation
-- Conclusion and reasoning
+        Please include:
+        - Your initial understanding
+        - Key considerations
+        - Step-by-step explanation
+        - Conclusion and reasoning
 
-Detailed Response:
-"""
+        Detailed Response:
+    """
     
     def __init__(self, enable_thinking: bool = True):
         """Initialize thinking engine."""
@@ -78,7 +78,7 @@ Detailed Response:
         self.enabled = False
         logger.info("❌ Thinking mode disabled")
     
-    def inject_thinking_prompt(
+    def injectThinkingPrompt(
         self,
         user_message: str,
         pattern: str = "chain_of_thought"
@@ -113,7 +113,7 @@ Detailed Response:
         
         return enhanced_prompt
     
-    def extract_thinking_steps(self, response: str) -> List[str]:
+    def extractThinkingSteps(self, response: str) -> List[str]:
         """
         Extract thinking steps from model response.
         
@@ -150,7 +150,7 @@ Detailed Response:
         
         return steps
     
-    def extract_conclusion(self, response: str) -> Optional[str]:
+    def extractConclusion(self, response: str) -> Optional[str]:
         """
         Extract conclusion or final answer from response.
         
@@ -177,7 +177,7 @@ Detailed Response:
         
         return None
     
-    def separate_thinking_from_answer(self, response: str) -> Tuple[str, str]:
+    def separateThinkingFromAnswer(self, response: str) -> Tuple[str, str]:
         """
         Separate thinking process from final answer.
         
@@ -199,9 +199,9 @@ Detailed Response:
             return thinking, answer
         
         # Pattern 3: Look for conclusion marker
-        steps = self.extract_thinking_steps(response)
+        steps = self.extractThinkingSteps(response)
         if steps:
-            conclusion = self.extract_conclusion(response)
+            conclusion = self.extractConclusion(response)
             thinking_text = "\n".join(steps)
             answer_text = conclusion or response
             return thinking_text, answer_text
@@ -209,7 +209,7 @@ Detailed Response:
         # Fallback: no clear separation
         return "", response
     
-    def format_thinking_for_display(self, thinking_text: str, max_chars: int = 500) -> str:
+    def formatThinkingForDisplay(self, thinking_text: str, max_chars: int = 500) -> str:
         """
         Format thinking text for UI display (e.g., in collapsed section).
         
@@ -228,7 +228,7 @@ Detailed Response:
         cleaned = thinking_text.strip()
         
         # Extract steps for better display
-        steps = self.extract_thinking_steps(cleaned)
+        steps = self.extractThinkingSteps(cleaned)
         
         if steps and len(steps) > 0:
             # Format as collapsible section
@@ -236,18 +236,18 @@ Detailed Response:
             
             if len(cleaned) > max_chars:
                 return f"""<details>
-<summary>💭 Model Thinking ({len(steps)} steps)</summary>
+                <summary>💭 Model Thinking ({len(steps)} steps)</summary>
 
-{steps_display}
+                {steps_display}
 
-*(Full thinking truncated)*
-</details>"""
+                *(Full thinking truncated)*
+                </details>"""
             else:
                 return f"""<details>
-<summary>💭 Model Thinking ({len(steps)} steps)</summary>
+                <summary>💭 Model Thinking ({len(steps)} steps)</summary>
 
-{cleaned}
-</details>"""
+                {cleaned}
+                </details>"""
         else:
             # No clear steps, just show as quote
             if len(cleaned) > max_chars:
@@ -256,7 +256,7 @@ Detailed Response:
             else:
                 return f"> **Thinking:** {cleaned}"
     
-    def parse_complex_response(self, response: str) -> Dict:
+    def parseComplexResponse(self, response: str) -> Dict:
         """
         Parse complex response with thinking and answer.
         
@@ -268,9 +268,9 @@ Detailed Response:
         }
         """
         
-        thinking, answer = self.separate_thinking_from_answer(response)
-        steps = self.extract_thinking_steps(response)
-        conclusion = self.extract_conclusion(response)
+        thinking, answer = self.separateThinkingFromAnswer(response)
+        steps = self.extractThinkingSteps(response)
+        conclusion = self.extractConclusion(response)
         
         return {
             'thinking': thinking,
@@ -279,7 +279,7 @@ Detailed Response:
             'conclusion': conclusion or "No explicit conclusion",
         }
     
-    def validate_reasoning(self, response: str) -> Dict:
+    def validateReasoning(self, response: str) -> Dict:
         """
         Validate quality of reasoning in response.
         
@@ -291,7 +291,7 @@ Detailed Response:
         }
         """
         
-        parsed = self.parse_complex_response(response)
+        parsed = self.parseComplexResponse(response)
         
         has_thinking = bool(parsed['thinking'])
         num_steps = len(parsed['steps'])
@@ -320,7 +320,7 @@ Detailed Response:
 _thinking_engine: Optional[ThinkingEngine] = None
 
 
-def get_thinking_engine() -> ThinkingEngine:
+def getThinkingEngine() -> ThinkingEngine:
     """Get or create global thinking engine instance."""
     global _thinking_engine
     
@@ -330,22 +330,22 @@ def get_thinking_engine() -> ThinkingEngine:
     return _thinking_engine
 
 
-def inject_thinking(
+def injectThinking(
     user_message: str,
     pattern: str = "chain_of_thought"
 ) -> str:
     """Convenience function to inject thinking prompt."""
-    return get_thinking_engine().inject_thinking_prompt(user_message, pattern)
+    return getThinkingEngine().injectThinkingPrompt(user_message, pattern)
 
 
 def parse_thinking_response(response: str) -> Dict:
     """Convenience function to parse response with thinking."""
-    return get_thinking_engine().parse_complex_response(response)
+    return getThinkingEngine().parseComplexResponse(response)
 
 
 def format_thinking_display(thinking_text: str) -> str:
     """Convenience function to format thinking for UI."""
-    return get_thinking_engine().format_thinking_for_display(thinking_text)
+    return getThinkingEngine().formatThinkingForDisplay(thinking_text)
 
 
 class LoopThinkingEngine:
@@ -362,30 +362,30 @@ class LoopThinkingEngine:
     
     ANALYSIS_PROMPT = """Analyze this query and design steps to gather information:
 
-Query: {query}
+        Query: {query}
 
-Please provide:
-1. What information is needed?
-2. What search queries would help?
-3. How many steps until complete?
+        Please provide:
+        1. What information is needed?
+        2. What search queries would help?
+        3. How many steps until complete?
 
-Analysis:
-"""
+        Analysis:
+    """
     
     EVALUATION_PROMPT = """Evaluate if we have enough information:
 
-Query: {original_query}
+        Query: {original_query}
 
-Information gathered so far:
-{gathered_info}
+        Information gathered so far:
+        {gathered_info}
 
-Questions:
-1. Do we have enough information? (YES/NO)
-2. What additional information is needed?
-3. What should the next search query be?
+        Questions:
+        1. Do we have enough information? (YES/NO)
+        2. What additional information is needed?
+        3. What should the next search query be?
 
-Evaluation:
-"""
+        Evaluation:
+    """
     
     def __init__(self, max_iterations: int = 3, info_threshold: int = 500):
         """
@@ -399,7 +399,7 @@ Evaluation:
         self.info_threshold = info_threshold
         logger.info(f"🔄 LoopThinkingEngine initialized (max_iter: {max_iterations})")
     
-    def design_search_steps(self, query: str) -> Dict:
+    def designSearchSteps(self, query: str) -> Dict:
         """
         Design steps to gather information for a query.
         
@@ -444,7 +444,7 @@ Evaluation:
             'is_current': is_current
         }
     
-    def evaluate_completeness(
+    def evaluateCompleteness(
         self,
         gathered_info: str,
         original_query: str,
@@ -497,7 +497,7 @@ Evaluation:
             'info_length': info_length
         }
     
-    def gather_information_loop(
+    def gatherInformationLoop(
         self,
         query: str,
         search_func,  # Function to perform searches
@@ -521,7 +521,7 @@ Evaluation:
         thinking_steps = []
         
         # Step 1: Design search steps
-        design = self.design_search_steps(query)
+        design = self.designSearchSteps(query)
         thinking_steps.append(f"Designed {design['estimated_iterations']} iterations")
         
         iteration = 0
@@ -536,7 +536,7 @@ Evaluation:
                 search_query = design['search_queries'][0] if design['search_queries'] else query
             else:
                 # Evaluate and get next query
-                eval_result = self.evaluate_completeness(gathered_info, query, iteration - 1)
+                eval_result = self.evaluateCompleteness(gathered_info, query, iteration - 1)
                 if eval_result['is_complete']:
                     thinking_steps.append(f"Stopped at iteration {iteration}: {eval_result['reason']}")
                     break
@@ -560,7 +560,7 @@ Evaluation:
                 thinking_steps.append(f"Search error at iteration {iteration}")
         
         # Final evaluation
-        final_eval = self.evaluate_completeness(gathered_info, query, iteration)
+        final_eval = self.evaluateCompleteness(gathered_info, query, iteration)
         thinking_steps.append(f"Final: {final_eval['reason']} (confidence: {final_eval['confidence']:.1%})")
         
         logger.info(f"✅ Information gathering complete in {iteration} iterations")
@@ -575,14 +575,14 @@ Evaluation:
 
 
 # Global loop thinking instance
-_loop_thinking_engine: Optional[LoopThinkingEngine] = None
+_loopThinkingEngine: Optional[LoopThinkingEngine] = None
 
 
-def get_loop_thinking_engine() -> LoopThinkingEngine:
+def getLoopThinkingEngine() -> LoopThinkingEngine:
     """Get or create global loop thinking engine instance."""
-    global _loop_thinking_engine
+    global _loopThinkingEngine
     
-    if _loop_thinking_engine is None:
-        _loop_thinking_engine = LoopThinkingEngine(max_iterations=3, info_threshold=500)
+    if _loopThinkingEngine is None:
+        _loopThinkingEngine = LoopThinkingEngine(max_iterations=3, info_threshold=500)
     
-    return _loop_thinking_engine
+    return _loopThinkingEngine

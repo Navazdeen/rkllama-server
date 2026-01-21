@@ -17,23 +17,24 @@ Key Features:
 - Multi-threaded request handling
 """
 
-import ctypes
-import sys
+import argparse
+import hashlib
+import json
 import os
-import subprocess
 import resource
+import subprocess
+import sys
 import threading
 import time
-import argparse
-import json
-from typing import Optional
-from flask import Flask, request, jsonify, Response, stream_with_context
 from datetime import datetime
-import hashlib
-from rkllm import RKLLM
-import rkllm as rkllm_module
-from model_manager import ModelManager, ModelPuller, ModelResourceManager
+from typing import Optional
+
+from flask import Flask, Response, jsonify, request, stream_with_context
 from model_api import ModelAPI
+from model_manager import ModelManager, ModelResourceManager
+
+import rkllm_server.core.rkllm as rkllm_module
+from rkllm_server.core.rkllm import RKLLM
 
 app = Flask(__name__)
 

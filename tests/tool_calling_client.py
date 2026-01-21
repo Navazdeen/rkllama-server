@@ -9,13 +9,14 @@ Usage:
     python tool_calling_client.py [--host localhost] [--port 8080]
 """
 
-import requests
-import json
 import argparse
+import json
+import re
 import sys
 from datetime import datetime
 from typing import Any, Dict, List
-import re
+
+import requests
 
 # ===================== Tool Definitions =====================
 

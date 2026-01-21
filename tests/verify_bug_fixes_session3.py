@@ -5,9 +5,9 @@ Verification Script for Bug Fixes - Session 3
 Demonstrates that the fixes for live updates and chat processing interruption are working.
 """
 
+import threading
 import unittest
 from typing import List, Tuple
-import threading
 
 
 class TestLiveUpdatesFixed(unittest.TestCase):

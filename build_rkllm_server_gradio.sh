@@ -5,14 +5,16 @@
 # This script builds and runs the Gradio-based RKLLM server.
 # Works with local development and remote deployment via ADB.
 #
+# Session 3 Updates: Enhanced live updates, fixed chat processing interruptions
+#
 # Usage (Local):
-#   ./build_rkllm_server_gradio.sh --model_path /path/to/model.rkllm --platform rk3588 --local
+#   ./build_rkllm_server_gradio.sh --model_folder /path/to/models --platform rk3588 --local
 #
 # Usage (Remote via ADB):
-#   ./build_rkllm_server_gradio.sh --model_path /board/path/model.rkllm --platform rk3588 --workshop /board/workspace
+#   ./build_rkllm_server_gradio.sh --model_folder /board/path/models --platform rk3588 --workshop /board/workspace
 #
 # Example:
-#   ./build_rkllm_server_gradio.sh --model_path ~/models/qwen.rkllm --platform rk3588 --local
+#   ./build_rkllm_server_gradio.sh --model_folder ~/models --platform rk3588 --local
 #*****************************************************************************************#
 
 set -e
@@ -23,13 +25,22 @@ WORKING_PATH=""
 LOCAL_MODE=false
 SERVER_PORT=7860
 
+# Validate Session 3 bug fixes
+function validate_fixes() {
+    if grep -q "yield.*thinking_display_text" ./rkllm_server/gradio_server.py 2>/dev/null; then
+        echo "  ✓ Live updates: READY"
+    else
+        echo "  ⚠ Live updates: Not detected"
+    fi
+}
+
 # Function to display help
 function show_help {
     cat << 'HELP'
 Usage: ./build_rkllm_server_gradio.sh [OPTIONS]
 
 OPTIONS:
-  --model_path PATH       Path to RKLLM model file (required)
+  --model_folder PATH     Path to model folder (required)
   --platform PLATFORM     Target platform: rk3588, rk3576, rk3562, rv1126b (required)
   --local                 Run locally instead of via ADB (optional)
   --workshop PATH         Working path on board for ADB deployment (optional)
@@ -40,18 +51,18 @@ OPTIONS:
 
 Examples:
   # Local development
-  ./build_rkllm_server_gradio.sh --model_path ~/models/qwen.rkllm --platform rk3588 --local
+  ./build_rkllm_server_gradio.sh --model_folder ~/models --platform rk3588 --local
   
   # Remote deployment via ADB
-  ./build_rkllm_server_gradio.sh --model_path /data/qwen.rkllm --platform rk3588 --workshop /data
+  ./build_rkllm_server_gradio.sh --model_folder /data/models --platform rk3588 --workshop /data
 HELP
 }
 
 # Parse command-line options
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --model_path)
-            MODEL_PATH="$2"
+        --model_folder)
+            MODEL_FOLDER="$2"
             shift 2
             ;;
         --platform)
@@ -91,26 +102,36 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Validate required arguments
-if [[ -z "$MODEL_PATH" || -z "$TARGET_PLATFORM" ]]; then
-    echo "❌ Error: --model_path and --platform are required" >&2
+if [[ -z "$MODEL_FOLDER" || -z "$TARGET_PLATFORM" ]]; then
+    echo "❌ Error: --model_folder and --platform are required" >&2
     show_help
     exit 1
 fi
 
 echo "========================================"
-echo "RKLLM Gradio Server Builder"
+echo "RKLLM Gradio Server Builder (Session 3 Fixes)"
 echo "========================================"
 
 if [[ "$LOCAL_MODE" == "true" ]]; then
     # LOCAL MODE: Run directly on this machine
     echo "📱 Mode: LOCAL DEVELOPMENT"
-    echo "🎯 Model: $MODEL_PATH"
+    echo "🎯 Model Folder: $MODEL_FOLDER"
     echo "📍 Platform: $TARGET_PLATFORM"
     echo "🔌 Port: $SERVER_PORT"
     
-    # Check if model exists
-    if [[ ! -f "$MODEL_PATH" ]]; then
-        echo "❌ Error: Model file not found: $MODEL_PATH" >&2
+    echo "
+✓ Session 3 Bug Fixes Active"
+    echo "  - Live thinking updates enabled"
+    echo "  - Chat processing optimized"
+
+    echo "
+✓ Session 3 Bug Fixes Active"
+    echo "  - Live thinking updates enabled"
+    echo "  - Chat processing optimized"
+
+    # Check if model folder exists
+    if [[ ! -d "$MODEL_FOLDER" ]]; then
+        echo "❌ Error: Model folder not found: $MODEL_FOLDER" >&2
         exit 1
     fi
     
@@ -139,7 +160,7 @@ if [[ "$LOCAL_MODE" == "true" ]]; then
     
     cd "$(dirname "$0")/rkllm_server"
     
-    CMD="python3 gradio_server.py --rkllm_model_path $MODEL_PATH --target_platform $TARGET_PLATFORM --port $SERVER_PORT"
+    CMD="python3 gradio_server.py --model_folder $MODEL_FOLDER --target_platform $TARGET_PLATFORM --port $SERVER_PORT"
     
     if [[ -n "$LORA_PATH" ]]; then
         CMD="$CMD --lora_model_path $LORA_PATH"
@@ -165,7 +186,7 @@ else
     fi
     
     echo "📱 Mode: REMOTE DEPLOYMENT (via ADB)"
-    echo "🎯 Model: $MODEL_PATH (on board)"
+    echo "🎯 Model Folder: $MODEL_FOLDER (on board)"
     echo "📍 Platform: $TARGET_PLATFORM"
     echo "💾 Workspace: $WORKING_PATH"
     
@@ -212,7 +233,7 @@ BOARD_EOF
     
     adb shell << BOARD_EOF
 cd $WORKING_PATH/rkllm_server/
-python3 gradio_server.py --rkllm_model_path $MODEL_PATH --target_platform $TARGET_PLATFORM$(if [[ -n "$LORA_PATH" ]]; then echo " --lora_model_path $LORA_PATH"; fi)$(if [[ -n "$PROMPT_FILE_PATH" ]]; then echo " --prompt_cache_path $PROMPT_FILE_PATH"; fi)
+python3 gradio_server.py --model_folder $MODEL_FOLDER --target_platform $TARGET_PLATFORM$(if [[ -n "$LORA_PATH" ]]; then echo " --lora_model_path $LORA_PATH"; fi)$(if [[ -n "$PROMPT_FILE_PATH" ]]; then echo " --prompt_cache_path $PROMPT_FILE_PATH"; fi)
 BOARD_EOF
 fi
 

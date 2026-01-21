@@ -3,11 +3,14 @@
 Test auto-titling functionality end-to-end
 """
 import sys
+
 sys.path.insert(0, '/home/navazdeen/rkllama-server')
 
-from rkllm_server.chat_database import ChatDatabase
-from datetime import datetime
 import os
+from datetime import datetime
+
+from rkllm_server.db.chat_database import ChatDatabase
+
 
 def test_auto_titling():
     """Test auto-titling from first user message"""
@@ -26,10 +29,10 @@ def test_auto_titling():
     print("\n📝 Test 1: Create new chat with model title")
     import uuid
     chat_id = str(uuid.uuid4())
-    db.create_chat(chat_id, "Qwen2.5-3B-Instruct", "Gradio")
+    db.createChat(chat_id, "Qwen2.5-3B-Instruct", "Gradio")
     print(f"  ✓ Created chat: {chat_id}")
     
-    chat_info = db.get_chat(chat_id)
+    chat_info = db.getChat(chat_id)
     print(f"  Initial title: '{chat_info['title']}'")
     assert "Chat with" in chat_info['title'], "Initial title should contain 'Chat with'"
     initial_title = chat_info['title']
@@ -37,27 +40,27 @@ def test_auto_titling():
     # Test 2: Add first user message and check if title updates
     print("\n📝 Test 2: Add first user message")
     user_message = "How to bake a chocolate cake with vanilla frosting"
-    db.add_message(chat_id, "user", user_message)
+    db.addMessage(chat_id, "user", user_message)
     print(f"  ✓ Added user message: '{user_message[:50]}...'")
     
     # Simulate what gradio_server.py does - extract title from message
-    new_title = db.generate_title_from_message(user_message, "Qwen2.5")
+    new_title = db.generateTitleFromMessage(user_message, "Qwen2.5")
     print(f"  Generated title from message: '{new_title}'")
     
     # Simulate the auto-titling logic (what we just fixed)
-    current_auto_title = db._generate_title_from_model("Qwen2.5")
+    current_auto_title = db._generateTitleFromModel("Qwen2.5")
     print(f"  Current auto-title from model: '{current_auto_title}'")
     
     if new_title and new_title != current_auto_title:
         print(f"  ✓ Title differs from auto-generated - updating...")
-        db.update_chat_title(chat_id, new_title)
+        db.updateChatTitle(chat_id, new_title)
         print(f"  ✓ Title updated to: '{new_title}'")
     else:
         print(f"  ✗ Title NOT updated (new_title == current_auto_title)")
         return False
     
     # Verify title was updated in database
-    chat_info = db.get_chat(chat_id)
+    chat_info = db.getChat(chat_id)
     print(f"  Database title now: '{chat_info['title']}'")
     assert chat_info['title'] == new_title, f"Title should be updated to '{new_title}'"
     
@@ -71,15 +74,15 @@ def test_auto_titling():
     
     for msg in test_messages:
         chat_id_2 = str(uuid.uuid4())
-        db.create_chat(chat_id_2, "Qwen2.5-3B-Instruct", "Gradio")
-        db.add_message(chat_id_2, "user", msg)
+        db.createChat(chat_id_2, "Qwen2.5-3B-Instruct", "Gradio")
+        db.addMessage(chat_id_2, "user", msg)
         
         # Extract title
-        extracted_title = db.generate_title_from_message(msg, "Qwen2.5")
-        current_model_title = db._generate_title_from_model("Qwen2.5")
+        extracted_title = db.generateTitleFromMessage(msg, "Qwen2.5")
+        current_model_title = db._generateTitleFromModel("Qwen2.5")
         
         if extracted_title and extracted_title != current_model_title:
-            db.update_chat_title(chat_id_2, extracted_title)
+            db.updateChatTitle(chat_id_2, extracted_title)
             print(f"  ✓ '{msg[:40]}...' → '{extracted_title}'")
         else:
             print(f"  ✗ '{msg[:40]}...' - title not updated")
@@ -87,7 +90,7 @@ def test_auto_titling():
     
     # Test 4: Verify search works with new titles
     print("\n📝 Test 4: Search for chats by updated titles")
-    results = db.search_chats("chocolate cake")
+    results = db.searchChats("chocolate cake")
     print(f"  Search 'chocolate cake': Found {len(results)} results")
     if len(results) > 0:
         print(f"  ✓ Found: '{results[0]['title']}'")
@@ -97,12 +100,12 @@ def test_auto_titling():
     
     # Test 5: Get all chats and verify titles
     print("\n📝 Test 5: List all chats and verify titles")
-    all_chats = db.get_all_chats()
+    all_chats = db.getAllChats()
     print(f"  Total chats: {len(all_chats)}")
     for i, chat in enumerate(all_chats):
         print(f"    {i+1}. {chat['title']} (Model: {chat['model']})")
         # Verify title is not just the default model title
-        assert chat['title'] != db._generate_title_from_model(chat['model']), \
+        assert chat['title'] != db._generateTitleFromModel(chat['model']), \
             f"Chat {i+1} should have user-generated title, not default"
     
     # Cleanup

@@ -9,8 +9,9 @@ Copy-paste ready examples for common operations.
 # QUICK START: Tool Calling
 # ============================================================
 
-import requests
 import json
+
+import requests
 
 BASE_URL = "http://localhost:8080"
 

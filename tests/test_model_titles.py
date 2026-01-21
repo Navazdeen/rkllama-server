@@ -3,9 +3,11 @@
 Test model-based title generation
 """
 import sys
+
 sys.path.insert(0, '/home/navazdeen/rkllama-server/rkllm_server')
 
 from chat_database import ChatDatabase
+
 
 def test_title_extraction():
     """Test the new extract_summary_from_model_response function"""

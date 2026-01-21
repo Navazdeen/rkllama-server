@@ -4,11 +4,13 @@ Integration test for auto-titling with gradio_server functions
 Simulates the actual workflow from the gradio server
 """
 import sys
+
 sys.path.insert(0, '/home/navazdeen/rkllama-server')
 
-from rkllm_server.chat_database import ChatDatabase
-import uuid
 import os
+import uuid
+
+from rkllm_server.db.chat_database import ChatDatabase
 
 # Simulate the gradio_server globals and functions
 chat_db = None
@@ -32,8 +34,8 @@ def create_new_session():
     global current_session_id, current_chat_id, current_chat_title, title_updated_for_chat
     current_session_id = str(uuid.uuid4())
     current_chat_id = current_session_id
-    chat_db.create_chat(current_chat_id, model_name, "Gradio")
-    current_chat_title = chat_db.get_chat(current_chat_id)['title']
+    chat_db.createChat(current_chat_id, model_name, "Gradio")
+    current_chat_title = chat_db.getChat(current_chat_id)['title']
     # Don't add to dict - leave it out so first message triggers the check
     print(f"  ✓ Created session: {current_session_id}")
     print(f"    Initial title: '{current_chat_title}'")
@@ -48,19 +50,19 @@ def add_message_to_session(role, content):
         return False
     
     # Add message
-    chat_db.add_message(current_chat_id, role, content)
+    chat_db.addMessage(current_chat_id, role, content)
     
     # Update chat title from first user message (THE FIX WE IMPLEMENTED)
     # Check if NOT in dict (first time we check)
     if role == "user" and current_chat_id not in title_updated_for_chat:
-        chat_info = chat_db.get_chat(current_chat_id)
+        chat_info = chat_db.getChat(current_chat_id)
         if chat_info:
-            new_title = chat_db.generate_title_from_message(content, model_name or "RKLLM")
+            new_title = chat_db.generateTitleFromMessage(content, model_name or "RKLLM")
             if new_title:
                 # Compare against auto-generated model title (THE KEY FIX)
-                current_auto_title = chat_db._generate_title_from_model(model_name or "RKLLM")
+                current_auto_title = chat_db._generateTitleFromModel(model_name or "RKLLM")
                 if new_title != current_auto_title:
-                    chat_db.update_chat_title(current_chat_id, new_title)
+                    chat_db.updateChatTitle(current_chat_id, new_title)
                     current_chat_title = new_title
                     print(f"    ✓ Chat title updated: '{new_title}'")
                 # Mark as updated (set to True)
@@ -94,8 +96,8 @@ def test_integration():
     
     # Step 4: Verify database state
     print("\n4️⃣ Verify database state")
-    chat_info = chat_db.get_chat(current_chat_id)
-    messages = chat_db.get_chat_messages(current_chat_id)
+    chat_info = chat_db.getChat(current_chat_id)
+    messages = chat_db.getChatMessages(current_chat_id)
     print(f"  Chat title in DB: '{chat_info['title']}'")
     print(f"  Total messages: {len(messages)}")
     for i, msg in enumerate(messages):
@@ -119,12 +121,12 @@ def test_integration():
     print(f"  Message: '{second_message}'")
     add_message_to_session("user", second_message)
     
-    chat_info_2 = chat_db.get_chat(current_chat_id)
+    chat_info_2 = chat_db.getChat(current_chat_id)
     print(f"  Chat 2 title: '{chat_info_2['title']}'")
     
     # Step 7: Get all chats and verify
     print("\n7️⃣ List all chats")
-    all_chats = chat_db.get_all_chats()
+    all_chats = chat_db.getAllChats()
     for i, chat in enumerate(all_chats):
         print(f"  {i+1}. {chat['title']}")
     
