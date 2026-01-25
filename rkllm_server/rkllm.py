@@ -9,8 +9,9 @@ import argparse
 import json
 import re
 
-# Set the dynamic library path
-rkllm_lib = ctypes.CDLL('lib/librkllmrt.so')
+# Set the dynamic library path (use absolute path)
+_script_dir = os.path.dirname(os.path.abspath(__file__))
+rkllm_lib = ctypes.CDLL(os.path.join(_script_dir, 'lib', 'librkllmrt.so'))
 # Define the structures from the library
 RKLLM_Handle_t = ctypes.c_void_p
 userdata = ctypes.c_void_p(None)
